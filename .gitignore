@@ -1,0 +1,17 @@
+# Build artifacts
+/target
+
+# Cargo.lock — only ignore for libraries, NOT for binaries/applications
+# Cargo.lock
+
+# Editor/IDE files (optional, some prefer a global gitignore)
+.vscode/
+.idea/
+*.swp
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
