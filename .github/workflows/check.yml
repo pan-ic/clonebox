@@ -1,0 +1,23 @@
+name: check.yml
+run-name: check
+on: [push]
+jobs:
+  check-clippy-warnings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo clippy -- -D warnings
+  check-rust-fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo fmt --check
+  check-rust-machete:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-machete --locked
+      - run: cargo machete

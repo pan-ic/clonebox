@@ -1,0 +1,11 @@
+name: audit.yml
+run-name: audit
+on: [push]
+jobs:
+  audit-package-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
