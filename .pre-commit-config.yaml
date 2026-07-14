@@ -7,6 +7,7 @@ repos:
         language: system
         files: \.rs$
         pass_filenames: false
+        stages: [pre-commit]
 
       - id: cargo-check
         name: cargo check
@@ -14,6 +15,7 @@ repos:
         language: system
         files: \.rs$
         pass_filenames: false
+        stages: [pre-commit]
 
       - id: cargo-clippy
         name: cargo clippy
@@ -21,3 +23,12 @@ repos:
         language: system
         files: \.rs$
         pass_filenames: false
+        stages: [pre-commit]
+
+      - id: aarch64-build
+        name: aarch64-build
+        entry: ./scripts/aarch64-build.sh
+        language: system
+        files: \.rs$
+        pass_filenames: false
+        stages: [pre-push]
