@@ -9,6 +9,6 @@ Discovered execve returns Result<Infallible> which makes if let Err(e) irrefutab
 let Err(e) = ... else { unreachable!() }
 
 ## 2026/07/15 Quiet session
-fork() -> clone()
-CLONE_NEWPID
-tests
+Switched fork() to clone() because it allows to customize the namespaces of the child process, that is a part
+of the steps needed to isolate the future container. Debugged waitpid not blocking; the root cause was missing SIGCHLD signal in clone() call.
+Known problem: migrate .unwrap() to .with_context()? + anyhow::Result<smtg>. Next: verify PID namespace isolation via /proc inode comparison.

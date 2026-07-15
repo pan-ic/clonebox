@@ -1,9 +1,12 @@
 use clap::{Parser, Subcommand};
+use libc;
 use nix::{
+    sched::{clone, CloneCb, CloneFlags},
     sys::wait::waitpid,
-    unistd::{ForkResult, execve, fork, getpid, write},
+    unistd::{execve, getpid, Pid, write},
 };
-use std::ffi::CString;
+use std::ffi::{CString, c_int};
+//use core::ffi::c_str;
 
 #[derive(Parser)]
 #[command(version, author, about)]
@@ -30,29 +33,33 @@ enum Commands {
     */
 }
 
+#[allow(unreachable_code)]
 fn create_child_process(cmd: &str) {
-    match unsafe { fork() } {
-        Ok(ForkResult::Parent { child, .. }) => {
-            println!("Parent pid is {}", getpid());
-            println!("Child pid is {}", child);
-            waitpid(child, None).unwrap();
-            println!("Back to parent");
-        }
-        Ok(ForkResult::Child) => {
-            let path = CString::new("/bin/sh").expect("c_str failed");
-            let ca = [
-                CString::new("sh").expect("c_str failed"),
-                CString::new("-c").expect("c_str failed"),
-                CString::new(cmd).expect("c_str failed"),
-            ];
+    let path = CString::new("/bin/sh").expect("c_str failed");
+    let ca = [
+        CString::new("sh").expect("c_str failed"),
+        CString::new("-c").expect("c_str failed"),
+        CString::new(cmd).expect("c_str failed"),
+    ];
+    let parent_pid = getpid();
+    let child_pid: Pid;
+    let cb: CloneCb = Box::new(|| -> isize {
+        let Err(e) = execve(&path, &ca, &[] as &[CString]);
+        let e = format!("execve failed: {}\n", e);
+        write(std::io::stderr(), e.as_bytes()).unwrap();
+        unsafe { libc::_exit(0); } 
+        0
+    });
+    let mut stack = vec![0u8; 1024 * 1024];
+    let clone_flags: CloneFlags = CloneFlags::CLONE_NEWPID;
+    let signal: Option<c_int> = Some(libc::SIGCHLD);
 
-            let Err(e) = execve(&path, &ca, &[] as &[CString]);
-            let e = format!("execve failed: {}\n", e);
-            write(std::io::stderr(), e.as_bytes()).unwrap();
-            unsafe { libc::_exit(0) };
-        }
-        Err(_) => panic!("Fork failed"),
-    }
+    println!("Parent pid is {}", parent_pid);
+    
+    unsafe { child_pid = clone(cb, &mut stack, clone_flags, signal).unwrap(); }
+    
+    println!("Child pid is {}", child_pid);
+    waitpid(child_pid, None).unwrap();
 }
 
 fn main() {
