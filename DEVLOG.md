@@ -7,3 +7,8 @@ Tests + fix known issues next session (unhandled execve error, hardcoded command
 Switched CLI from builder to derive pattern I think is cleaner for subcommand-heavy CLIs.
 Discovered execve returns Result<Infallible> which makes if let Err(e) irrefutable, the correct pattern is
 let Err(e) = ... else { unreachable!() }
+
+## 2026/07/15 Quiet session
+fork() -> clone()
+CLONE_NEWPID
+tests
