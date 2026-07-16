@@ -12,3 +12,8 @@ let Err(e) = ... else { unreachable!() }
 Switched fork() to clone() because it allows to customize the namespaces of the child process, that is a part
 of the steps needed to isolate the future container. Debugged waitpid not blocking; the root cause was missing SIGCHLD signal in clone() call.
 Known problem: migrate .unwrap() to .with_context()? + anyhow::Result<smtg>. Next: verify PID namespace isolation via /proc inode comparison.
+
+## 2026/07/16 Quiet session
+Had difficulties to write integration tests for 2 main reasons: clone() creates a new process so attempt any to compare directly what happens into
+the child to the parent are inefficient and, current code organization doesn't allow to isolate some variable (i.e. PID) and needs some state
+management to make some integration tests possible. Also have to keep in mind that there are 2 exits status, the parent and the child one.
