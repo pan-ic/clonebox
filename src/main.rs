@@ -1,8 +1,8 @@
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use libc;
+#[cfg(target_os = "linux")]
+use nix::sched::{CloneCb, CloneFlags, clone};
 use nix::{
-    sched::{clone, CloneCb, CloneFlags},
     sys::wait::waitpid,
     unistd::{execve, getpid, Pid, write},
 };
@@ -37,9 +37,8 @@ enum Commands {
 }
 
 #[allow(unreachable_code)]
-fn create_child_process(cmd: &str) -> anyhow::Result<()> {
-    //change to .with_context(|| format!("failed to clone pid {}", pid))?;
-
+#[cfg(target_os = "linux")]
+fn create_child_process(name: &str, cmd: &str) -> anyhow::Result<()> {
     let path = CString::new("/bin/sh").context("c_str failure")?;
     let ca = [
         CString::new("sh").context("c_str failure")?,
