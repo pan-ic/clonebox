@@ -5,10 +5,7 @@ mod integration_test {
 
     #[allow(unused)]
     fn build() {
-        let build = Command::new("cargo")
-            .arg("build")
-            .status()
-            .unwrap();
+        let build = Command::new("cargo").arg("build").status().unwrap();
     }
 
     fn get_binary_path<'a>() -> &'a Path {
@@ -27,7 +24,7 @@ mod integration_test {
             .args(["run", "--name", "test", "--cmd", "echo OK"])
             .status()
             .unwrap();
-        
+
         assert!(exit.success());
     }
 
@@ -53,7 +50,7 @@ mod integration_test {
             .unwrap();
 
         println!("{}", String::from_utf8_lossy(&run.stdout));
-        println!("status value: {}", run.status); 
+        println!("status value: {}", run.status);
         println!("wo neg: {}, w neg: {}", run.status.success(), !run.status.success());
         assert!(!run.status.success());
     }

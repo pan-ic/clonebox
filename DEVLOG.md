@@ -17,3 +17,7 @@ Known problem: migrate .unwrap() to .with_context()? + anyhow::Result<smtg>. Nex
 Had difficulties to write integration tests for 2 main reasons: clone() creates a new process so attempt any to compare directly what happens into
 the child to the parent are inefficient and, current code organization doesn't allow to isolate some variable (i.e. PID) and needs some state
 management to make some integration tests possible. Also have to keep in mind that there are 2 exits status, the parent and the child one.
+
+## 2026/07/17 Quiet session                                                                                                                          
+Set up container UTS namespace to the container name, sethostname() might fail if name is invalid or right are not sufficient. In that case          
+process exits. Another important part is that sethostname() must happen into the child process else it obviously change the parent process: your os.

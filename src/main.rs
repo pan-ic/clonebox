@@ -4,21 +4,19 @@ use clap::{Parser, Subcommand};
 use nix::sched::{CloneCb, CloneFlags, clone};
 use nix::{
     sys::wait::waitpid,
-    unistd::{execve, getpid, Pid, write},
+    unistd::{Pid, execve, getpid, sethostname, write},
 };
 use std::ffi::{CString, c_int};
 //use core::ffi::c_str;
 
-#[derive(Debug)]
-#[derive(Parser)]
+#[derive(Debug, Parser)]
 #[command(version, author, about)]
 struct Cli {
     #[command(subcommand)]
     cmd: Commands,
 }
 
-#[derive(Debug)]
-#[derive(Subcommand)]
+#[derive(Debug, Subcommand)]
 enum Commands {
     #[command(arg_required_else_help = true)]
     Run {
@@ -48,25 +46,37 @@ fn create_child_process(name: &str, cmd: &str) -> anyhow::Result<()> {
     let parent_pid = getpid();
     let child_pid: Pid;
     let cb: CloneCb = Box::new(|| -> isize {
+        if let Err(e) = sethostname(name) {
+            let e = format!("sethostname failed: {}", e);
+            let _ = write(std::io::stderr(), e.as_bytes());
+            unsafe {
+                libc::_exit(1);
+            }
+        };
+
         let Err(e) = execve(&path, &ca, &[] as &[CString]);
         let e = format!("execve failed: {}\n", e);
         //write might fail but we are about to exit anyway
         let _ = write(std::io::stderr(), e.as_bytes());
-        unsafe { libc::_exit(1); } 
+        unsafe {
+            libc::_exit(1);
+        }
         0
     });
     let mut stack = vec![0u8; 1024 * 1024];
-    let clone_flags: CloneFlags = CloneFlags::CLONE_NEWPID;
+    let clone_flags: CloneFlags = CloneFlags::CLONE_NEWPID | CloneFlags::CLONE_NEWUTS;
     let signal: Option<c_int> = Some(libc::SIGCHLD);
 
     println!("Parent pid is {}", parent_pid);
-    
-    unsafe { child_pid = clone(cb, &mut stack, clone_flags, signal).context("clone failure")?; }
-    
+
+    unsafe {
+        child_pid = clone(cb, &mut stack, clone_flags, signal).context("clone failure")?;
+    }
+
     println!("Child pid is {}", child_pid);
     let child_return = waitpid(child_pid, None).context("waitpid failure")?;
-    println!("Child return is: {:?}", child_return); 
-    
+    println!("Child return is: {:?}", child_return);
+
     Ok(())
 }
 
@@ -76,7 +86,7 @@ fn main() -> anyhow::Result<()> {
     match cli.cmd {
         Commands::Run { name, cmd, .. } => {
             println!("Container {} starts", name);
-            create_child_process(&cmd)?;
+            create_child_process(&name, &cmd)?;
         }
     }
     Ok(())
@@ -88,21 +98,15 @@ mod tests {
 
     #[test]
     fn cli_parse() {
-        let cli = Cli::try_parse_from([
-            "clonebox",
-            "run",
-            "--name",
-            "test",
-            "--cmd",
-            "echo OK",
-        ]).unwrap();
-        
+        let cli =
+            Cli::try_parse_from(["clonebox", "run", "--name", "test", "--cmd", "echo OK"]).unwrap();
+
         match cli.cmd {
-            Commands::Run {config, name, cmd} => {
+            Commands::Run { config, name, cmd } => {
                 assert_eq!(config, Some(String::from("/run/clonebox")));
                 assert_eq!(name, "test");
                 assert_eq!(cmd, "echo OK");
-            },
+            }
         };
     }
 }
