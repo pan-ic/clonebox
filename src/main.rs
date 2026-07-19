@@ -37,6 +37,7 @@ enum Commands {
 #[allow(unreachable_code)]
 #[cfg(target_os = "linux")]
 fn create_child_process(name: &str, cmd: &str) -> anyhow::Result<()> {
+    //execve() call variables
     let path = CString::new("/bin/sh").context("c_str failure")?;
     let ca = [
         CString::new("sh").context("c_str failure")?,
@@ -45,14 +46,37 @@ fn create_child_process(name: &str, cmd: &str) -> anyhow::Result<()> {
     ];
     let parent_pid = getpid();
     let child_pid: Pid;
+
+    //mount() + pivot_root() call variables
+    //TODO: replace what can be repaced by config parsing
+    //note that variable might move in the clone call back if not needed elsewhere (and so, won't have
+    //to be static), will be determined during refacto
+    let new_root: &'static str  = "/home/debian/clonebox/alpine_fs";
+    let mount_proc: &'static str  = "proc";
+    let mount_proc_path: &'static str  = "/proc";
+    let put_old: &'static str = "/put_old";
+    let child_old_path: &'static str = "/home/debian/clonebox/alpine_fs/put_old";
+
+    //clone() call variables
     let cb: CloneCb = Box::new(|| -> isize {
-        if let Err(e) = sethostname(name) {
-            let e = format!("sethostname failed: {}", e);
-            let _ = write(std::io::stderr(), e.as_bytes());
-            unsafe {
-                libc::_exit(1);
-            }
-        };
+        //child mount has to be private else it's still shared with the parent
+        child_try!(mount(None::<&str>, "/", None::<&str>, MsFlags::MS_PRIVATE | MsFlags::MS_REC, None::<&str>), "private mount", 1);
+
+        //change hostname
+        child_try!(sethostname(name), "sethostname", 1);
+
+        //bind mount fs
+        child_try!(mount(Some(new_root), new_root, None::<&str>, MsFlags::MS_BIND, None::<&str>), "bind mount", 1);
+
+        //pivot_root()
+        child_try!(create_dir_all(Path::new(&child_old_path)), "create_dir_all", 1);
+        child_try!(pivot_root(new_root, child_old_path), "pivot_root", 1);
+        child_try!(chdir("/"), "chdir", 1);
+        child_try!(umount2(put_old, MntFlags::MNT_DETACH), "unmount2", 1);
+        child_try!(remove_dir(Path::new(put_old)), "remove_dir", 1);
+
+        //mount proc
+        child_try!(mount(Some(mount_proc), mount_proc_path, Some(mount_proc), MsFlags::empty(), None::<&str>), "fs mount", 1);
 
         let Err(e) = execve(&path, &ca, &[] as &[CString]);
         let e = format!("execve failed: {}\n", e);
@@ -63,8 +87,10 @@ fn create_child_process(name: &str, cmd: &str) -> anyhow::Result<()> {
         }
         0
     });
+
+    //clone() call variables
     let mut stack = vec![0u8; 1024 * 1024];
-    let clone_flags: CloneFlags = CloneFlags::CLONE_NEWPID | CloneFlags::CLONE_NEWUTS;
+    let clone_flags: CloneFlags = CloneFlags::CLONE_NEWPID | CloneFlags::CLONE_NEWUTS | CloneFlags::CLONE_NEWNS;
     let signal: Option<c_int> = Some(libc::SIGCHLD);
 
     println!("Parent pid is {}", parent_pid);
