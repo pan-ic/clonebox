@@ -3,11 +3,26 @@ use clap::{Parser, Subcommand};
 #[cfg(target_os = "linux")]
 use nix::sched::{CloneCb, CloneFlags, clone};
 use nix::{
+    mount::{MntFlags, MsFlags, mount, umount2},
     sys::wait::waitpid,
-    unistd::{Pid, execve, getpid, sethostname, write},
+    unistd::{Pid, chdir, execve, getpid, pivot_root, sethostname, write},
 };
 use std::ffi::{CString, c_int};
+use std::fs::{create_dir_all, remove_dir};
+use std::path::Path;
 //use core::ffi::c_str;
+
+macro_rules! child_try {
+    ($expr:expr, $msg:expr, $eval:expr) => {
+        if let Err(e) = $expr {
+            let msg = format!("{}: {}\n", $msg, e);
+            let _ = write(std::io::stderr(), msg.as_bytes());
+            unsafe {
+                libc::_exit($eval as c_int);
+            }
+        }
+    };
+}
 
 #[derive(Debug, Parser)]
 #[command(version, author, about)]
