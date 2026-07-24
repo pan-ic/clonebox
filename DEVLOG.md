@@ -37,3 +37,24 @@ accessible at /put_old inside the new root
 - finally mount proc on /proc
 Even if there is no way to exec in the container yet, it's still possible to launch a shell inside the current one (clonebox run --name test
 --cmd /bin/sh) that really really helped me to test syscall manually line per line.
+
+## 2026/07/21 Hard session
+network_namespaces (7); veth (4); ip (8) add, link, route; netns; netlink (7); rtnetlink (7)
+Network are isolated namespace on NIX. A physical network is associated to 1 namespace only, if transfered to another namespace then it stays
+until last process dies then go back to original namesapce. So veth are virtual network devices that can be create into new namespace and the
+communicate with physical network devices. Veth work with pairs. Man says: place one end of a pair in a namespace then the other in another
+namespace then ip link add <p1-name> netns <p1-ns> type veth peer <p2-name> netns <p2-ns> to create or ip link set <p2-name> netns <p2-ns> if
+already existing
+(by moving a side); use ethool (8) to test.
+Discovered network namespaces, veth pairs, netlink, and iptables NAT
+from scratch. No prior assumptions to break pure discovery. Full
+stack working: container namespace with veth pair, IP assignment,
+loopback, default route, MASQUERADE NAT, internet access from inside
+the namespace. Next: implement in Rust using rtnetlink then raw netlink.
+
+## 2026/07/24 Hard session
+To understand how veth network, ip and netns tools works I had to create manually first then, using std::process::Command I replicated by code
+the manual steps. During the manual experiment a net namespace has been created manually. Thing that differs and bring some trouble with the
+container is that the clone call with the CLONE_NEWNET flag creates an anonymous namespace that cannot be used with netns so I had to use nsenter.
+The next steps are to change Command() use to rtnetlink; which is only a transition to understand the framework because that would need to switch
+the actual code to async only for network creation so, the last step is to use directly unix socks to create the network.
