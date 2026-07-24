@@ -7,10 +7,13 @@ use nix::{
     sys::wait::waitpid,
     unistd::{Pid, chdir, execve, getpid, pivot_root, sethostname, write},
 };
+use rtnetlink::{new_connection, LinkVeth, LinkUnspec, packet_route::link::LinkAttribute};
 use std::ffi::{CString, c_int};
 use std::fs::{create_dir_all, remove_dir};
 use std::path::Path;
 use std::process::Command;
+use std::net::{IpAddr, Ipv4Addr};
+use futures::StreamExt;
 //use core::ffi::c_str;
 
 macro_rules! child_try {
@@ -167,26 +170,76 @@ fn create_child_process(name: &str, cmd: &str) -> anyhow::Result<()> {
     std::fs::write("/proc/sys/net/ipv4/ip_forward", "1")
         .context("failed enable ip forwarding")?;
 
-    //creates veth pair
-    let _ = run_cmd("ip", &["link", "add", "veth0", "type", "veth", "peer", "name", "veth1"])?;
-    
-    //set up parent process end
-    let _ = run_cmd("ip", &["addr", "add", "10.0.0.1/24", "dev", "veth0"])?;
-    let _ = run_cmd("ip", &["link", "set", "veth0", "up"])?;
+    let rt = tokio::runtime::Runtime::new().context("tokio runtime")?;
 
-    //move child process end
-    let _ = run_cmd("ip", &["link", "set", "veth1", "netns", &netns_child_path])?;
-    
-    //that next line was supposed to set the child veth end  but that doesn't work with netns
-    //because the namespace is still anonymous
-    //let _ = run_cmd("ip", &["netns", "exec", &netns_child_path, "ip", "addr", "add", "10.0.0.2/24", "dev", "veth1"])?;
-    //let _ = run_cmd("ip", &["netns", "exec", &netns_child_path, "ip", "link", "set", "veth1", "up"])?;
-    //let _ = run_cmd("ip", &["netns", "exec", &netns_child_path, "ip", "link", "set", "lo", "up"])?;
+    rt.block_on(async {
+        let (connection, handle, _) = new_connection()?;
+        tokio::spawn(connection);
 
-    //set up chil process end
+        let veth_name: (&str, &str) = ("veth1", "veth1-peer");
+
+        handle.link()
+            .add(LinkVeth::new(veth_name.0, veth_name.1).build())
+            .execute()
+            .await
+            .context("failed to create veth")?;
+
+        let mut veth_link_message_stream = handle.link()
+            .get()
+            .match_name(veth_name.0.to_string())
+            .execute();
+            
+        let veth_link_message = veth_link_message_stream
+            .next()
+            .await
+            .context("failed to get Stream")?
+            .context("failed to get LinkMessage")?;
+        
+        handle
+            .address()
+            .add(veth_link_message.header.index, IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 24 as u8)
+            .execute()
+            .await
+            .context("faild to set address")?;
+
+        handle
+            .link()
+            .set(LinkUnspec::new_with_index(veth_link_message.header.index)
+                .up()
+                .build())
+            .execute()
+            .await
+            .context("failed to set parent veth end UP")?;
+
+        let mut peer_stream = handle.link()
+            .get()
+            .match_name(veth_name.1.to_string())
+            .execute();
+
+        let peer_link = peer_stream
+            .next()
+            .await
+            .context("failed to get peer stream")?
+            .context("failed to get peer LinkMessage")?;
+
+        handle
+            .link()
+            .set(LinkUnspec::new_with_index(peer_link.header.index)
+                .setns_by_pid(child_pid.as_raw() as u32)
+                .build())
+            .execute()
+            .await
+            .context("failed to move child veth (veth1-peer) end into the container")?;
+
+        Ok::<(), anyhow::Error>(())
+    }).context("network setup failed")?;
+
+    //set up child process end, the problem here is that rtnetlink need AsyncSocket to communicate
+    //with the child network interface, which is not possible to implement yet on that temporary
+    //solution because I'll use raw sockets anyway
     let nsenter_arg = format!("--net=/proc/{}/ns/net", child_pid.as_raw());
-    let _ = run_cmd("nsenter", &[&nsenter_arg, "ip", "addr", "add", "10.0.0.2/24", "dev", "veth1"])?;
-    let _ = run_cmd("nsenter", &[&nsenter_arg, "ip", "link", "set", "veth1", "up"])?;
+    let _ = run_cmd("nsenter", &[&nsenter_arg, "ip", "addr", "add", "10.0.0.2/24", "dev", "veth1-peer"])?;
+    let _ = run_cmd("nsenter", &[&nsenter_arg, "ip", "link", "set", "veth1-peer", "up"])?;
     let _ = run_cmd("nsenter", &[&nsenter_arg, "ip", "link", "set", "lo", "up"])?;
 
     //set up iptables rules & child ns default route
@@ -205,11 +258,11 @@ fn create_child_process(name: &str, cmd: &str) -> anyhow::Result<()> {
     println!("Child pid is {}", child_pid);
     let child_return = waitpid(child_pid, None).context("waitpid failure")?;
     println!("Child return is: {:?}", child_return);
-
+/*
     //cleanup
     std::fs::write("/proc/sys/net/ipv4/ip_forward", "0")
         .context("failed to disable ip forwarding")?;
-
+*/
     Ok(())
 }
 

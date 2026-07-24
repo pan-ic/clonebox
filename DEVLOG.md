@@ -52,9 +52,15 @@ stack working: container namespace with veth pair, IP assignment,
 loopback, default route, MASQUERADE NAT, internet access from inside
 the namespace. Next: implement in Rust using rtnetlink then raw netlink.
 
-## 2026/07/24 Hard session
+## 2026/07/23 Hard session
 To understand how veth network, ip and netns tools works I had to create manually first then, using std::process::Command I replicated by code
 the manual steps. During the manual experiment a net namespace has been created manually. Thing that differs and bring some trouble with the
 container is that the clone call with the CLONE_NEWNET flag creates an anonymous namespace that cannot be used with netns so I had to use nsenter.
 The next steps are to change Command() use to rtnetlink; which is only a transition to understand the framework because that would need to switch
 the actual code to async only for network creation so, the last step is to use directly unix socks to create the network.
+
+## 2026/07/24 Quiet session
+Apparently netlink_packet_route::link::LinkMessage exist behind packet::route::LinkMessage inside rtnetlink, had to check public re-exports.
+Implementation using rtnetlink blocks on child setup because of AsyncSockets, in theory it could be implemented to finish the experiment but I use
+raw socket as final implementation so I've mixed rtnetlink for parent + nsenter for child. Child would use exactly the same init step than parent but
+after calling new_connection_with_socket() that is the remote connection to the child network.
