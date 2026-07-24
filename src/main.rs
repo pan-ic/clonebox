@@ -50,6 +50,17 @@ enum Commands {
     */
 }
 
+fn run_cmd(cmd: &str, args: &[&str]) -> anyhow::Result<()> {
+    let status = Command::new(cmd)
+        .args(args)
+        .status()?;
+
+    if !(status.success()) {
+        anyhow::bail!("{}, {:?} :failed with exit status: {}", cmd, args, status);
+    }
+    Ok(())
+}
+
 #[allow(unreachable_code)]
 #[cfg(target_os = "linux")]
 fn create_child_process(name: &str, cmd: &str) -> anyhow::Result<()> {
