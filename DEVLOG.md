@@ -64,3 +64,31 @@ Apparently netlink_packet_route::link::LinkMessage exist behind packet::route::L
 Implementation using rtnetlink blocks on child setup because of AsyncSockets, in theory it could be implemented to finish the experiment but I use
 raw socket as final implementation so I've mixed rtnetlink for parent + nsenter for child. Child would use exactly the same init step than parent but
 after calling new_connection_with_socket() that is the remote connection to the child network.
+
+## 2026/07/25-31 Hard session
+Last part of the network core was to directly use raw socket and Kernel structs. I would qualify that first experience with Kernel network programming
+as both passionate and frustrating. Frustration comes from:
+- Often real difficulties to find sources about how things works. Documentation is often really poor if you don't know where to find it. So the rule I've
+established for Kernel network programming (will be extended to Kernel programming) sourcing:
+    a. man pages; if lucky, get the big picture of the data struct and implementation with the related pages
+       (e.g. netlink(7)-(3), rtnetlink(7)-(3)...),
+    b. github, OSS projects; if lucky, any public source code of a related  project used to check syscalls and implementation
+       (e.g. runc, containerd, rtnetlink rust crate, netlink go package, iproute2..),
+    c. strace/perf/bpftrace
+       (e.g. strace -x -s 1000 -e sendmsg ip addr add 10.0.0.1/24 dev veth1 2>&1),
+    d. minimal program; just write a minimal program that aims to use the tageted datastruct, that allows to focus/divide and give a better exploitation
+       of the potential responses of the API/Kernel
+    e. Kernel source code (bootlin), grep
+       (e.g. bootlin '/net' 'drivers/net' '/include', 'include/uapi'; grep -r {} "/usr/include/linux"),
+    f. Kernel documentation at /Documentation, examples at /samples,
+    g. LWN.net for articles on Kernel features.
+The faster method to me is to use strace then check docs/code.
+- A lot of type casting in this kind of code, because of the use of Rust types and C types and the switch between stdlib, libc and netlink
+type casting hell
+- Sometimes C macros are not yet translated in Rust lib, grep -r "{}" /usr/include/linux is a life saver to get the scalar value there.
+I've also been tricked by two things:
+- socket messages queue, unread ACK made a mess with get_if_id() giving a stale id.
+- when you use an C struct implemented in Rust and that implementation has private fields these have to be initialized (zeroed padding) using methods like
+std::mem::zeroed()
+At the end implementing from scratch had the great advantage to make the child network setup easier, it only needs to be accessed by opening an fd on
+the child net ns then uses of setns to switch from parent to child, setting up and vice versa.
