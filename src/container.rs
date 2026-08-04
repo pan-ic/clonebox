@@ -4,13 +4,15 @@ use nix::sched::{CloneCb, CloneFlags, clone, setns};
 use nix::{
     mount::{MntFlags, MsFlags, mount, umount2},
     sys::wait::waitpid,
-    unistd::{Pid, chdir, execve, getpid, pivot_root, sethostname, write},
+    unistd::{Pid, chdir, execve, getpid, pivot_root, sethostname, write as nix_write},
 };
 use std::ffi::{CString, c_int};
 use std::fs::{
     create_dir_all,
     File,
+    read_to_string,
     remove_dir,
+    write,
 };
 use std::path::Path;
 use std::os::fd::AsFd;
@@ -31,7 +33,7 @@ macro_rules! child_try {
     ($expr:expr, $msg:expr, $eval:expr) => {
         if let Err(e) = $expr {
             let msg = format!("{}: {}\n", $msg, e);
-            let _ = write(std::io::stderr(), msg.as_bytes());
+            let _ = nix_write(std::io::stderr(), msg.as_bytes());
             unsafe {
                 libc::_exit($eval as c_int);
             }
@@ -120,7 +122,7 @@ pub fn create_child_process(name: &str, cmd: &str) -> anyhow::Result<()> {
         let Err(e) = execve(&path, &ca, &[] as &[CString]);
         let e = format!("execve failed: {}\n", e);
         //write might fail but we are about to exit anyway
-        let _ = write(std::io::stderr(), e.as_bytes());
+        let _ = nix_write(std::io::stderr(), e.as_bytes());
         unsafe {
             libc::_exit(1);
         }
@@ -148,7 +150,7 @@ pub fn create_child_process(name: &str, cmd: &str) -> anyhow::Result<()> {
     let peer_address = Ipv4Addr::new(10, 0, 0, 2);
     let peer = "veth1_peer";
     let mut w = Writer {
-        buf : Vec::new(),
+        buf: Vec::new(),
     };
     let host_sk = create_netlink_socket()?;
     let _ = create_veth_pair(host_sk.as_fd(), &mut w, host, peer)?;
@@ -170,9 +172,54 @@ pub fn create_child_process(name: &str, cmd: &str) -> anyhow::Result<()> {
 
     let _ = setns(host_ns_fd.as_fd(), CloneFlags::CLONE_NEWNET)?;
 
+    // TODO: implement clone3 wrapper; potential nix crate OSS contribution
+    // see: man 2 clone3, CLONE_INTO_CGROUP flag,
+    // then migrate to clone3(CLONE_INTO_CGROUP)
+
+    let enable_controller = |path: &str, resource: &str| -> anyhow::Result<()> {
+        let controllers_path = format!("{}{}", path, "/cgroup.controllers");
+        let available = read_to_string(controllers_path).with_context(|| format!("failed to read cgroup.controllers: {}", &resource))?;
+        if !available.contains(resource) {
+            anyhow::bail!("controller {} not available on this system", resource);
+        }
+
+        let subtree_path = format!("{}{}", path, "/cgroup.subtree_control");
+        let enabled = read_to_string(&subtree_path).with_context(|| format!("failed to read cgroup.subtree: {}: ", &resource))?;
+        if !enabled.contains(resource) {
+            write(subtree_path, format!("+{}", resource))?;
+        }
+        Ok(())
+    };
+
+    let root_cgroups = "/sys/fs/cgroup";
+    enable_controller(root_cgroups, "memory")?;
+    enable_controller(root_cgroups, "cpu")?;
+
+    let app_cgroups_path = "/sys/fs/cgroup/clonebox";
+    let child_cgroups = format!("/sys/fs/cgroup/clonebox/{}", name);
+    let child_mem_max = format!("{}/memory.max", child_cgroups);
+    let child_cpu_max = format!("{}/cpu.max", child_cgroups);
+    let child_procs = format!("{}/cgroup.procs", child_cgroups);
+
+    let _ = create_dir_all(app_cgroups_path).context("failed to create clonebox cgroup dir")?;
+    enable_controller(&app_cgroups_path, "memory")?;
+    enable_controller(&app_cgroups_path, "cpu")?;
+
+    let _ = create_dir_all(&child_cgroups).context("failed to create child cgroup dir")?;
+    let _ = enable_controller(&child_cgroups, "memory").context("failed to enable memory cgroup")?;
+    let _ = write(child_mem_max, "256M").context("failed to change memory cgroup resource")?;
+    let _ = enable_controller(&child_cgroups, "cpu").context("failed to enable cpu cgroup")?;
+    let _ = write(child_cpu_max, "100000 100000").context("failed to change cpu cgroup resource")?;
+    
+    //Here comes the troubles, writing this way inside the child cgroup.procs is not possible
+    //because system.d own the child process so the resource is busy
+    //let _ = write(child_procs, child_pid.as_raw().to_string()).context("failed to associate cgroups to child")?;
+
     println!("Child pid is {}", child_pid);
     let child_return = waitpid(child_pid, None).context("waitpid failure")?;
     println!("Child return is: {:?}", child_return);
+
+    let _ = remove_dir(child_cgroups).context("failed to clean cgroups")?;
 
     Ok(())
 }

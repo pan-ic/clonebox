@@ -92,3 +92,16 @@ I've also been tricked by two things:
 std::mem::zeroed()
 At the end implementing from scratch had the great advantage to make the child network setup easier, it only needs to be accessed by opening an fd on
 the child net ns then uses of setns to switch from parent to child, setting up and vice versa.
+
+## 2026/08/02-04 Hard session
+I've tried to create/write cgroups, everything worked almost fine until I had to move the child PID into the child cgroup.procs at 
+/sys/fs/cgroups/clonebox/{container_name}/cgroup.procs . That is explained because the system.d handle the child resource after the clone() process 
+(that can be checked using cat /proc/1/cgroup && systemd-cgls | head -30). To avoid that solution are either:
+-tinkering moving clonebox to it's own scope: systemd-run --scope --slice=clonebox.slice ./target/debug/clonebox run --name test --cmd /bin/sh. This is not
+acceptable for a serious container runtime demo that follows OCI; it would require that the user first find the problem in the doc and then tyoe that command
+at every run.
+-implementing clone3 properly that allows to:
+"A child process created via fork(2) inherits its parent's cgroup memberships.  A process's cgroup memberships are preserved across execve(2).
+The clone3(2) CLONE_INTO_CGROUP flag can be used to create a child process that begins its life in a different version 2 cgroup from the parent process"
+(man 7 clone, NOTE)
+The problem is: nix doesn't not implement clone3(). Glibc itself doesn't wrap the clone3(). I have to wrap it properly using syscalls + rust.
