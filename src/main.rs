@@ -1,10 +1,10 @@
+mod cgroup;
 mod container;
+mod namespace;
 mod network;
 
 use crate::container::create_child_process;
 use clap::{Parser, Subcommand};
-
-const AF_NETLINK: u16 = libc::AF_NETLINK as u16;
 
 #[derive(Debug, Parser)]
 #[command(version, author, about)]

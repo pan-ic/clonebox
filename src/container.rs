@@ -1,45 +1,24 @@
 use anyhow::Context;
 #[cfg(target_os = "linux")]
-use nix::sched::{CloneCb, CloneFlags, clone, setns};
+use nix::sched::{CloneCb, CloneFlags, clone};
 use nix::{
-    mount::{MntFlags, MsFlags, mount, umount2},
     sys::wait::waitpid,
-    unistd::{Pid, chdir, execve, getpid, pivot_root, sethostname, write as nix_write},
+    unistd::{Pid, execve, getpid, write as nix_write},
 };
 use std::ffi::{CString, c_int};
-use std::fs::{
-    create_dir_all,
-    File,
-    read_to_string,
-    remove_dir,
-    write,
-};
-use std::path::Path;
-use std::os::fd::AsFd;
-use std::net::Ipv4Addr;
+use std::fs::remove_dir;
 
-use crate::network::{
-    add_default_route,
-    get_interface_index,
-    create_netlink_socket,
-    create_veth_pair,
-    move_to_netns,
-    set_interface_up,
-    set_ip_addr,
-    Writer,
+use crate::cgroup::create_cgroups;
+
+use crate::namespace::{
+    make_child_private,
+    set_child_hostname,
+    bind_mount_child,
+    do_pivot_root,
+    mount_child_proc,
 };
 
-macro_rules! child_try {
-    ($expr:expr, $msg:expr, $eval:expr) => {
-        if let Err(e) = $expr {
-            let msg = format!("{}: {}\n", $msg, e);
-            let _ = nix_write(std::io::stderr(), msg.as_bytes());
-            unsafe {
-                libc::_exit($eval as c_int);
-            }
-        }
-    };
-}
+use crate::network::create_network;
 
 #[allow(unreachable_code)]
 #[cfg(target_os = "linux")]
@@ -64,60 +43,12 @@ pub fn create_child_process(name: &str, cmd: &str) -> anyhow::Result<()> {
     let put_old: &'static str = "/put_old";
     let child_old_path: &'static str = "/home/debian/clonebox/alpine_fs/put_old";
 
-    //clone() call variables
     let cb: CloneCb = Box::new(|| -> isize {
-        //child mount has to be private else it's still shared with the parent
-        child_try!(
-            mount(
-                None::<&str>,
-                "/",
-                None::<&str>,
-                MsFlags::MS_PRIVATE | MsFlags::MS_REC,
-                None::<&str>
-            ),
-            "private mount",
-            1
-        );
-
-        //change hostname
-        child_try!(sethostname(name), "sethostname", 1);
-
-        //bind mount fs
-        child_try!(
-            mount(
-                Some(new_root),
-                new_root,
-                None::<&str>,
-                MsFlags::MS_BIND,
-                None::<&str>
-            ),
-            "bind mount",
-            1
-        );
-
-        //pivot_root()
-        child_try!(
-            create_dir_all(Path::new(&child_old_path)),
-            "create_dir_all",
-            1
-        );
-        child_try!(pivot_root(new_root, child_old_path), "pivot_root", 1);
-        child_try!(chdir("/"), "chdir", 1);
-        child_try!(umount2(put_old, MntFlags::MNT_DETACH), "unmount2", 1);
-        child_try!(remove_dir(Path::new(put_old)), "remove_dir", 1);
-
-        //mount proc
-        child_try!(
-            mount(
-                Some(mount_proc),
-                mount_proc_path,
-                Some(mount_proc),
-                MsFlags::empty(),
-                None::<&str>
-            ),
-            "fs mount",
-            1
-        );
+        make_child_private();
+        set_child_hostname(name);
+        bind_mount_child(new_root);
+        do_pivot_root(child_old_path, new_root, put_old);
+        mount_child_proc(mount_proc, mount_proc_path);
 
         let Err(e) = execve(&path, &ca, &[] as &[CString]);
         let e = format!("execve failed: {}\n", e);
@@ -143,77 +74,12 @@ pub fn create_child_process(name: &str, cmd: &str) -> anyhow::Result<()> {
         child_pid = clone(cb, &mut stack, clone_flags, signal).context("clone failure")?;
     }
 
-    let host_ns_fd = File::open("/proc/self/ns/net")?;
-    let peer_ns_fd = File::open(format!("/proc/{}/ns/net", child_pid.as_raw()))?;
-    let host = "veth1";
-    let host_address = Ipv4Addr::new(10, 0, 0, 1);
-    let peer_address = Ipv4Addr::new(10, 0, 0, 2);
-    let peer = "veth1_peer";
-    let mut w = Writer {
-        buf: Vec::new(),
-    };
-    let host_sk = create_netlink_socket()?;
-    let _ = create_veth_pair(host_sk.as_fd(), &mut w, host, peer)?;
-    let host_i_id = get_interface_index(host_sk.as_fd(), &mut w, host)?;
-    let _ = set_ip_addr(host_sk.as_fd(), &mut w, host_i_id, host_address, 24u8)?;
-    let _ = set_interface_up(host_sk.as_fd(), &mut w, host_i_id)?;
-    let child_i_id = get_interface_index(host_sk.as_fd(), &mut w, peer)?; 
-    let _ = move_to_netns(host_sk.as_fd(), &mut w, &child_i_id, &peer_ns_fd)?;
-
-    let _ = setns(peer_ns_fd.as_fd(), CloneFlags::CLONE_NEWNET)?;
-
-    let child_sk = create_netlink_socket()?;
-    let _ = set_ip_addr(child_sk.as_fd(), &mut w, child_i_id, peer_address, 24u8)?;
-    let _ = set_interface_up(child_sk.as_fd(), &mut w, child_i_id)?;
-    let _ = set_interface_up(child_sk.as_fd(), &mut w, 1)?;
-    let _ = add_default_route(child_sk.as_fd(), &mut w, host_address)?;
-
-    drop(child_sk);
-
-    let _ = setns(host_ns_fd.as_fd(), CloneFlags::CLONE_NEWNET)?;
+    create_network(&child_pid)?;
 
     // TODO: implement clone3 wrapper; potential nix crate OSS contribution
     // see: man 2 clone3, CLONE_INTO_CGROUP flag,
     // then migrate to clone3(CLONE_INTO_CGROUP)
-
-    let enable_controller = |path: &str, resource: &str| -> anyhow::Result<()> {
-        let controllers_path = format!("{}{}", path, "/cgroup.controllers");
-        let available = read_to_string(controllers_path).with_context(|| format!("failed to read cgroup.controllers: {}", &resource))?;
-        if !available.contains(resource) {
-            anyhow::bail!("controller {} not available on this system", resource);
-        }
-
-        let subtree_path = format!("{}{}", path, "/cgroup.subtree_control");
-        let enabled = read_to_string(&subtree_path).with_context(|| format!("failed to read cgroup.subtree: {}: ", &resource))?;
-        if !enabled.contains(resource) {
-            write(subtree_path, format!("+{}", resource))?;
-        }
-        Ok(())
-    };
-
-    let root_cgroups = "/sys/fs/cgroup";
-    enable_controller(root_cgroups, "memory")?;
-    enable_controller(root_cgroups, "cpu")?;
-
-    let app_cgroups_path = "/sys/fs/cgroup/clonebox";
-    let child_cgroups = format!("/sys/fs/cgroup/clonebox/{}", name);
-    let child_mem_max = format!("{}/memory.max", child_cgroups);
-    let child_cpu_max = format!("{}/cpu.max", child_cgroups);
-    let child_procs = format!("{}/cgroup.procs", child_cgroups);
-
-    let _ = create_dir_all(app_cgroups_path).context("failed to create clonebox cgroup dir")?;
-    enable_controller(&app_cgroups_path, "memory")?;
-    enable_controller(&app_cgroups_path, "cpu")?;
-
-    let _ = create_dir_all(&child_cgroups).context("failed to create child cgroup dir")?;
-    let _ = enable_controller(&child_cgroups, "memory").context("failed to enable memory cgroup")?;
-    let _ = write(child_mem_max, "256M").context("failed to change memory cgroup resource")?;
-    let _ = enable_controller(&child_cgroups, "cpu").context("failed to enable cpu cgroup")?;
-    let _ = write(child_cpu_max, "100000 100000").context("failed to change cpu cgroup resource")?;
-    
-    //Here comes the troubles, writing this way inside the child cgroup.procs is not possible
-    //because system.d own the child process so the resource is busy
-    //let _ = write(child_procs, child_pid.as_raw().to_string()).context("failed to associate cgroups to child")?;
+    let child_cgroups = create_cgroups(name)?;
 
     println!("Child pid is {}", child_pid);
     let child_return = waitpid(child_pid, None).context("waitpid failure")?;
