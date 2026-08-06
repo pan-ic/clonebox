@@ -2,6 +2,7 @@ mod cgroup;
 mod container;
 mod namespace;
 mod network;
+mod clone3;
 
 use crate::container::create_child_process;
 use clap::{Parser, Subcommand};

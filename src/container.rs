@@ -1,12 +1,14 @@
 use anyhow::Context;
 #[cfg(target_os = "linux")]
-use nix::sched::{CloneCb, CloneFlags, clone};
 use nix::{
-    sys::wait::waitpid,
+    sched::{CloneCb, CloneFlags, clone},
+    sys::{wait::waitpid, signal::Signal},
     unistd::{Pid, execve, getpid, write as nix_write},
 };
 use std::ffi::{CString, c_int};
 use std::fs::remove_dir;
+
+use crate::clone3::Clone3;
 
 use crate::cgroup::create_cgroups;
 
@@ -61,31 +63,33 @@ pub fn create_child_process(name: &str, cmd: &str) -> anyhow::Result<()> {
     });
 
     //clone() call variables
-    let mut stack = vec![0u8; 1024 * 1024];
     let clone_flags: CloneFlags = CloneFlags::CLONE_NEWPID
         | CloneFlags::CLONE_NEWUTS
         | CloneFlags::CLONE_NEWNS
         | CloneFlags::CLONE_NEWNET;
-    let signal: Option<c_int> = Some(libc::SIGCHLD);
+    let signal: Option<Signal> = Some(nix::sys::signal::Signal::SIGCHLD);
 
     println!("Parent pid is {}", parent_pid);
 
     unsafe {
-        child_pid = clone(cb, &mut stack, clone_flags, signal).context("clone failure")?;
-    }
+        child_pid = Clone3::new(signal)
+            .flags(clone_flags.bits() as u64)
+            .build(Box::new(cb))
+            .context("clone failure")?;
+    }    
 
     create_network(&child_pid)?;
 
     // TODO: implement clone3 wrapper; potential nix crate OSS contribution
     // see: man 2 clone3, CLONE_INTO_CGROUP flag,
     // then migrate to clone3(CLONE_INTO_CGROUP)
-    let child_cgroups = create_cgroups(name)?;
+    //let child_cgroups = create_cgroups(name)?;
 
     println!("Child pid is {}", child_pid);
     let child_return = waitpid(child_pid, None).context("waitpid failure")?;
     println!("Child return is: {:?}", child_return);
 
-    let _ = remove_dir(child_cgroups).context("failed to clean cgroups")?;
+    //let _ = remove_dir(child_cgroups).context("failed to clean cgroups")?;
 
     Ok(())
 }

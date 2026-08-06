@@ -105,3 +105,23 @@ at every run.
 The clone3(2) CLONE_INTO_CGROUP flag can be used to create a child process that begins its life in a different version 2 cgroup from the parent process"
 (man 7 clone, NOTE)
 The problem is: nix doesn't not implement clone3(). Glibc itself doesn't wrap the clone3(). I have to wrap it properly using syscalls + rust.
+
+## 2026/08/05-06 Hard session
+I've tried to implement a Clone3 version of the syscall with the same name. First idea was to develop it the clean way: generic and near from nix implementation
+of clone, the goal was to ensure compatibility with almost the same function call (or minimal refactor). So the main idea was with the help of the builder pattern
+to create a Rust wrapper (Clone3 struct) of the struct CloneArgs needed by the clone3 syscall. That Clone3 struct initially contains the callback that is sent to
+the child. That implementation has a trade off directly linked to Rust memory managment which is:
+-Clone3 struct in the parent is changed to CloneArgs, CloneArgs is a Rust "ffi" for the clone3 struct clone_args. That clone_struct has no clue about the Rust
+callback (closure). This bring a first trouble: before the builder pattern drop Clone3 struct for CloneArgs the closure has to move inside .build() scope.
+-The clone3 syscall is a fork style code, so the child inherits everything the parents allow the child to (because that's still clone, thanks to CloneFlags we have
+control over what the child inherits). The stack will be inherited by the child and shared state exists between parent and child until we execute the callback (the 
+execve a the end of the callback replace the process image: stack, heap, etc...). At some point parent process will leave the .build() method, this will destroy
+/erase the callback. The child on his side will execute a callback that has been erased. Follows a segfault.
+The current status of the implementation has a call back that is not really needed because it mostly follow fork style. 
+Implementing a nix style clone would need here to use CLONE_VM but it break the container isolation core concept. Plus clone3 fork style make that impossible
+to use functon-pointer style entry withou assembly 
+Else we would have:
+-create a raw pointer on the callback and optional arguments at the top of the child stack
+-call clone3 with that stack
+-start the child at a trampoline function that allow the child to start at that callback and not follow the rest of the instruction the paren had. The callback then
+erase the stack.
