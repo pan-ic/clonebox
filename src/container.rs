@@ -170,6 +170,11 @@ pub fn create_child_process(name: &str, cmd: &str) -> anyhow::Result<()> {
 
     let _ = setns(host_ns_fd.as_fd(), CloneFlags::CLONE_NEWNET)?;
 
+    std::fs::write("/proc/sys/net/ipv4/ip_forward", "1")?;
+    std::process::Command::new("iptables")
+        .args(["-t", "nat", "-A", "POSTROUTING", "-s", "10.0.0.0/24", "-o", "ens2", "-j", "MASQUERADE"])
+        .status()?;
+
     println!("Child pid is {}", child_pid);
     let child_return = waitpid(child_pid, None).context("waitpid failure")?;
     println!("Child return is: {:?}", child_return);
