@@ -593,7 +593,15 @@ pub(crate) fn create_network(child_pid: &Pid) -> anyhow::Result<()> {
 
     drop(child_sk);
 
-    let _ = setns(host_ns_fd.as_fd(), CloneFlags::CLONE_NEWNET)?; 
+    let _ = setns(host_ns_fd.as_fd(), CloneFlags::CLONE_NEWNET)?;
+
+    // TODO: replace with NETLINK_NETFILTER implementation
+    // iptables NAT rule: masquerade container traffic through host interface
+    // see: man 8 nft, include/uapi/linux/netfilter/nf_tables.h
+    std::fs::write("/proc/sys/net/ipv4/ip_forward", "1")?;
+    std::process::Command::new("iptables")
+        .args(["-t", "nat", "-A", "POSTROUTING", "-s", "10.0.0.0/24", "-o", "ens2", "-j", "MASQUERADE"])
+        .status()?;
 
     Ok(())
 }

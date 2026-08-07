@@ -5,8 +5,10 @@ use nix::{
     sched::{CloneCb, CloneFlags, clone},
     unistd::{Pid, execve, getpid, sethostname, write},
 };
-use std::ffi::{CString, c_int};
-use std::os::fd::{RawFd};
+use std::{
+    ffi::{CString, c_int},
+    os::fd::RawFd,
+};
 
 pub const CLONE_PIDFD: u64          = 0x00001000;
 pub const CLONE_PARENT_SETTID: u64  = 0x00100000;

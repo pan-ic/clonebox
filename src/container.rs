@@ -5,12 +5,22 @@ use nix::{
     sys::{wait::waitpid, signal::Signal},
     unistd::{Pid, execve, getpid, write as nix_write},
 };
-use std::ffi::{CString, c_int};
-use std::fs::remove_dir;
+use std::{
+    ffi::{CString, c_int},
+    fs::remove_dir,
+    os::fd::{AsRawFd, OwnedFd, RawFd},
+};
 
 use crate::clone3::Clone3;
 
-use crate::cgroup::create_cgroups;
+use crate::cgroup::{
+    get_root_cgroup_path,
+    get_app_cgroup_path,
+    get_child_cgroup_path,
+    create_cgroup,
+    init_resources,
+    set_cgroup,
+};
 
 use crate::namespace::{
     make_child_private,
@@ -71,19 +81,29 @@ pub fn create_child_process(name: &str, cmd: &str) -> anyhow::Result<()> {
 
     println!("Parent pid is {}", parent_pid);
 
+    let (child_cgroup_path, child_cgroup_fd) = create_cgroup(name)?;
+
+    let os_resources = vec!["cpu", "memory"];
+    let app_resources = vec!["cpu", "memory"];
+
+    init_resources(get_root_cgroup_path(), &os_resources);
+    init_resources(get_app_cgroup_path(), &app_resources);
+
     unsafe {
         child_pid = Clone3::new(signal)
             .flags(clone_flags.bits() as u64)
+            .cgroup(child_cgroup_fd.as_raw_fd())
             .build(Box::new(cb))
             .context("clone failure")?;
     }    
 
     create_network(&child_pid)?;
 
-    // TODO: implement clone3 wrapper; potential nix crate OSS contribution
-    // see: man 2 clone3, CLONE_INTO_CGROUP flag,
-    // then migrate to clone3(CLONE_INTO_CGROUP)
-    //let child_cgroups = create_cgroups(name)?;
+    let child_resources = vec!["cpu", "memory"];
+    let child_cgroup_path = get_child_cgroup_path(&name);
+    init_resources(&child_cgroup_path, &child_resources);
+    set_cgroup(&child_cgroup_path, child_resources[0],"max","100000 100000")?;
+    set_cgroup(&child_cgroup_path, child_resources[1], "max", "256M")?;
 
     println!("Child pid is {}", child_pid);
     let child_return = waitpid(child_pid, None).context("waitpid failure")?;

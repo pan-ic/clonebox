@@ -125,3 +125,7 @@ Else we would have:
 -call clone3 with that stack
 -start the child at a trampoline function that allow the child to start at that callback and not follow the rest of the instruction the paren had. The callback then
 erase the stack.
+
+## 2026/08/07 Quiet session
+Finished cgroupv2 after clone3 implementation. Use of CLONE_INTO_CGROUP uses a file descriptor of the new leaf cgroup to associate that to the child
+(no cgroup.procs). EBUSY will happen if the resource has been created into the leaf before it's associated to the child.

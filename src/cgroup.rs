@@ -1,9 +1,26 @@
 use anyhow::Context;
-use std::fs::{
-    create_dir_all,
-    read_to_string,
-    write,
+use std::{
+    fs::{
+        create_dir_all,
+        read_to_string,
+        write,
+        File,
+    },
+    os::fd::OwnedFd,
 };
+use nix::unistd::Pid;
+
+pub(crate) fn get_root_cgroup_path() -> &'static str {
+    "/sys/fs/cgroup"
+}
+
+pub(crate) fn get_app_cgroup_path() -> &'static str {
+    "/sys/fs/cgroup/clonebox"
+}
+
+pub(crate) fn get_child_cgroup_path(name: &str) -> String {
+    format!("/sys/fs/cgroup/clonebox/{}", name)
+}
 
 fn enable_controller(path: &str, resource: &str) -> anyhow::Result<()> {
     let controllers_path = format!("{}{}", path, "/cgroup.controllers");
@@ -20,30 +37,39 @@ fn enable_controller(path: &str, resource: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(crate) fn create_cgroups(name: &str) -> anyhow::Result<String> {
-    let root_cgroups = "/sys/fs/cgroup";
-    enable_controller(root_cgroups, "memory")?;
-    enable_controller(root_cgroups, "cpu")?;
+pub(crate) fn set_cgroup(instance: &str, resource: &str, key: &str, value: &str) -> anyhow::Result<()>{ 
+    let cgroup_file = format!("{}/{}.{}", instance, resource, key);
 
-    let app_cgroups_path = "/sys/fs/cgroup/clonebox";
-    let child_cgroups = format!("/sys/fs/cgroup/clonebox/{}", name);
-    let child_mem_max = format!("{}/memory.max", child_cgroups);
-    let child_cpu_max = format!("{}/cpu.max", child_cgroups);
-    let _child_procs = format!("{}/cgroup.procs", child_cgroups);
-
-    let _ = create_dir_all(app_cgroups_path).context("failed to create clonebox cgroup dir")?;
-    enable_controller(&app_cgroups_path, "memory")?;
-    enable_controller(&app_cgroups_path, "cpu")?;
-
-    let _ = create_dir_all(&child_cgroups).context("failed to create child cgroup dir")?;
-    let _ = enable_controller(&child_cgroups, "memory").context("failed to enable memory cgroup")?;
-    let _ = write(child_mem_max, "256M").context("failed to change memory cgroup resource")?;
-    let _ = enable_controller(&child_cgroups, "cpu").context("failed to enable cpu cgroup")?;
-    let _ = write(child_cpu_max, "100000 100000").context("failed to change cpu cgroup resource")?;
+    write(cgroup_file, value).with_context(|| format!("failed to change {}.{} cgroup value:{} for {}", resource, key, value, instance))?;
     
-    //Here comes the troubles, writing this way inside the child cgroup.procs is not possible
-    //because system.d own the child process so the resource is busy
-    //let _ = write(child_procs, child_pid.as_raw().to_string()).context("failed to associate cgroups to child")?;
+    Ok(())
+}
 
-    Ok(child_cgroups)
+pub(crate) fn init_resources(instance: &str, resources: &Vec<&str>) -> anyhow::Result<()>{
+    for resource in resources {
+        enable_controller(&instance, resource).with_context(|| { format!("failed to enable {} {} cgroup", instance, resource)})?;
+    }
+
+    Ok(())
+}
+
+pub(crate) fn create_cgroup(name: &str) -> anyhow::Result<(String, OwnedFd)> {
+    //let root_cgroup = get_root_cgroup_path();
+    let app_cgroup_path = get_app_cgroup_path();
+    let child_cgroup = get_child_cgroup_path(&name);
+
+    //enable_controller(root_cgroup, "memory").context("failed to enable root memory cgroup")?;
+    //enable_controller(root_cgroup, "cpu").context("failed to enable root cpu cgroup")?;
+
+    create_dir_all(app_cgroup_path).context("failed to create clonebox cgroup dir")?;
+    //enable_controller(&app_cgroup_path, "memory").context("failed to enable app memory cgroup")?;
+    //enable_controller(&app_cgroup_path, "cpu").context("failed to enable app cpu cgroup")?;
+
+    create_dir_all(&child_cgroup).context("failed to create child cgroup dir")?;
+    //enable_controller(&child_cgroup, "memory").context("failed to enable container memory cgroup")?;
+    //enable_controller(&child_cgroup, "cpu").context("failed to enable container cpu cgroup")?;
+
+    let fd = File::open(&child_cgroup)?;
+    
+    Ok((child_cgroup, OwnedFd::from(fd)))
 }
