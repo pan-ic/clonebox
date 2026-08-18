@@ -35,18 +35,34 @@ use crate::network::create_network;
 
 #[allow(unreachable_code)]
 #[cfg(target_os = "linux")]
-pub fn create_child_process(name: &str, cmd: &str) -> anyhow::Result<()> {
-    //execve() call variables
-    let path = CString::new("/bin/sh").context("c_str failure")?;
-    let ca = [
-        CString::new("sh").context("c_str failure")?,
-        CString::new("-c").context("c_str failure")?,
-        CString::new(cmd).context("c_str failure")?,
-    ];
-    let parent_pid = getpid();
-    let child_pid: Pid;
+pub fn create(container_id: &str, config_path: &str) -> anyhow::Result<()> {
+    let bundle_path = get_bundle_path(container_id);
+    if Path::new(&bundle_path).exists() {
+        anyhow::bail!("container {} already exists", container_id);
+    }
 
-    //mount() + pivot_root() call variables
+    create_dir_all(&bundle_path)
+        .context("failed to create container bundle")?;
+    let config = Config::load(config_path).context("failed to load config")?;
+    if config.get_root_path().is_empty() {
+        anyhow::bail!("config.json: root.path is required");
+    }
+    if config.get_process_args().map(|a| a.is_empty())
+        .unwrap_or(true) {
+        anyhow::bail!("config.json: process.args is required")
+    }
+    let mut log_fd = open_log_file(&bundle_path).context("create: ")?;
+    let mut runtime = Runtime::new(None, None, None);
+    let state = State::new(
+        config.get_oci_version().to_string(),
+        container_id.to_string(),
+        ContainerState::Creating,
+        None,
+        bundle_path.clone(),
+        None
+    );
+    write_state_file(container_id, &state).context("failed to write state")?;
+
     //TODO: replace what can be repaced by config parsing
     //note that variable might move in the clone call back if not needed elsewhere (and so, won't have
     //to be static), will be determined during refacto
