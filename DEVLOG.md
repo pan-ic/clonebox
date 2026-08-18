@@ -129,3 +129,52 @@ erase the stack.
 ## 2026/08/07 Quiet session
 Finished cgroupv2 after clone3 implementation. Use of CLONE_INTO_CGROUP uses a file descriptor of the new leaf cgroup to associate that to the child
 (no cgroup.procs). EBUSY will happen if the resource has been created into the leaf before it's associated to the child.
+
+## 2026/08/08 Quiet session
+Started to map command line to full OCI lifecycle. Created all needed functions, netx step implementation. State.json file writing/reading implementation. More
+generaly bundle creation (file located a run/clonebox that will contain what's needed for runtime)
+
+## 2026/08/09 Hard session
+Implementation of IPC between processes (pipe + Unix socket) to follow OCI guidelines: create create a child process then freeze the child before it execute the command
+and reset the process (then "becomes a real container"). Start unfreeze that child process writing a byte into a pipe between the child and the start process.
+Order of the freeze call is critical:
+-creates pipe between parent and non existing child first (but before clone anyway).
+-pipe being unidirectionnal on end is used by parent to write to the child, the other end is use dby the child to read parent.
+-the parent process has itself to be stopped before waiting it's child return (else deadlock), that happens when accepting connexion to a unix socket, then the start
+command connect to that socket to unfreeze
+-the parent write to the child, as the child read is before execve, execution of the child is unfreeze and the user command is launched in the container.
+Order of the pipe2 (freeze) arguments is also critical, for the record:
+Had reversed assignment causing EBADF on parent write. create blocks on accept(), start connects to socket, parent writes to pipe, child unblocks from read()
+and calls execve. A lot of wasted debugging time.
+Config parsing added, commands are now mapped via the config file and not anymore per command line
+
+## 2026/08/10 Hard session:
+Mount handling implementation has been difficult for many reasons:
+-project architecture, that has to be reviewed, everything in the current state of the project imperative styl and some struct could be implemented now
+to cluster related data and helpers/methods
+-first I was handling bind per default which is not the required behavior. Things has been defaulted to overlayfs then mount follow what the user asks for
+in the ocnfig file
+-there is much much more on linux mount to implement that's outside of that project scope so the only mounts who actually works are tmpfs and bind
+anything else will be defaulted to overlayfs (as default rootfs: upper/work/merged dirs created in bundle, lowerdir=root.path). Auto mount also happens 
+with /proc, /sys and /dev.
+-things are splitted into different calls, bind and overlayfs mount had ot happen before the pivot root, in a pre-pivot func. Then all other mounts
+(tmpfs, sys, dev, proc) happens in posrt pivot, in the new view of the child process
+
+## 2026/08/13 Quiet session:
+Exec via setns
+
+## 2026/08/14 Quiet session
+Added kill/delete/pause/resume/state commands, state machine persisted to state.json
+
+## 2026/08/15 Quiet session
+Logger
+Network fix: Veth names derived from container_id (was hardcoded, broke multi-container and tests). Integration tests: lifecycle happy path, error cases,
+cgroups, network ping, filesystem bind mount.
+
+## 2026/08/16 Hard session;
+Integration tests with their individual config files. That's a bit of noise but I keep that this way for now by lack of time. The fact is that one config file
+for every test is not very convenient because you might want to keep container running at different time. Adding different timer and config files allows to run
+tests with threading else some resources conflict might happens because of execution flow. That's why for example (for convenience and complexity reasons) lifecycle()
+test is a solo full function testing the whole state flow.
+Had also some troubles to test things independently and with multi threading without making a real mess on the host (that's equivalent to spawn a big amount of
+containers in a short time and due to well known limitation list, that creates a lot of conflicts)

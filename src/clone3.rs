@@ -1,14 +1,9 @@
-use anyhow;
 use libc::{syscall};
 use nix::{
-    sys::{wait::waitpid, signal::Signal},
-    sched::{CloneCb, CloneFlags, clone},
-    unistd::{Pid, execve, getpid, sethostname, write},
+    sys::signal::Signal,
+    unistd::Pid,
 };
-use std::{
-    ffi::{CString, c_int},
-    os::fd::RawFd,
-};
+use std::os::fd::RawFd;
 
 pub const CLONE_PIDFD: u64          = 0x00001000;
 pub const CLONE_PARENT_SETTID: u64  = 0x00100000;
@@ -17,95 +12,6 @@ pub const CLONE_SETTLS: u64         = 0x00080000;
 pub const CLONE_INTO_CGROUP: u64    = 0x200000000;
 #[allow(dead_code)]
 const SYS_CLONE3: i64 = 435;
-
-/*
-    NOTE: on understanding about clone(), clone3() similarities and differences
-
-    clone(): wrapped by glibc, libc ffi, and nix implementation. Creates a child process and
-    start the new process using the callback that is passed to the function. The child inherits
-    from the parent only what we allows it to inherits; that using the CloneFlags features. Never
-    had the chance to use pid_t *_Nullable parent_tid, void *_Nullable tls,
-    pid_t *_Nullable child_tid so idk what they are used for. On the return:
-    -the return of the clone call in the parent part is the child PID
-    -child has no proper return, it exits with an exit code
-
-    clone3(): not wrapped yet by glibc. Doesn't exist yet in libc (only the sys op code is defined)
-    nor nix. Man describe it as a superset of clone(). So it creates a child that inherits everything
-    from it parents process (fork style) and start execution at the same point where parent clone call
-    was. CloneFlags features are here to control over what it's inherits. But still it copies the parent
-    stack (so environment, fd, time, and every might be secrets), solution to reset the satck is to call
-    a first execve on itself. On the return:
-    -child returns 0 if success
-    -parents returns child PID
-
-    diff on call:
-    -clone uses: func call back (function pointer in C), stack pointer + stack size, cloneflgs,
-                    args that are passed to execve in the child. No clue about the use of other things in C
-    -clone3 uses: cleaner: a struct and I guess the size of that struct; this is passed to syscall then. But
-    fork style  differentiating the child clone return (0) from the parent (child_pid) first, then impl nix
-    style with call_back (even if clone3() does not take a func pointer)
-
-    more diff in man:
-        clone()         clone3()        Notes
-                           cl_args field
-           flags & ~0xff   flags           For most flags; details below
-           parent_tid      pidfd           See CLONE_PIDFD
-           child_tid       child_tid       See CLONE_CHILD_SETTID
-           parent_tid      parent_tid      See CLONE_PARENT_SETTID
-           flags & 0xff    exit_signal
-           stack           stack
-           ---             stack_size
-           tls             tls             See CLONE_SETTLS
-           ---             set_tid         See below for details
-           ---             set_tid_size
-           ---             cgroup          See CLONE_INTO_CGROUP
-
-    syscall(): here I'm not really sure, first argument is the SYS op code, like the call to the assembly func, the
-    second is a variadic argument so theorically you passes everything that is needed. Now the order is like a surprise
-    I guess. So logic would be to follow the pointer on the struct raw bytes as first variadic arg and the the size of
-    that struct. On the return value, it is supposed to be the return defined by the clone 3 assembly func so,
-    PID in parent and 0 in child
-        
-    MEMO:
-
-    int clone(int (*fn)(void *_Nullable), void *stack, int flags,
-                 void *_Nullable arg, ...  /* pid_t *_Nullable parent_tid,
-                                              void *_Nullable tls,
-                                              pid_t *_Nullable child_tid */ );
-
-    pub unsafe fn clone(cb: CloneCb<'_>,
-        stack: &mut [u8],
-        flags: CloneFlags,
-        signal: Option<c_int>,
-        ) -> Result<Pid>
-
-    long syscall(SYS_clone3, struct clone_args *cl_args, size_t size);
-
-    pub const SYS_clone3: c_long = 435;
-
-    pub unsafe extern "C" fn syscall(num: c_long, ...) -> c_long
-
-    struct clone_args {
-               u64 flags;        /* Flags bit mask */
-               u64 pidfd;        /* Where to store PID file descriptor
-                                    (int *) */
-               u64 child_tid;    /* Where to store child TID,
-                                    in child's memory (pid_t *) */
-               u64 parent_tid;   /* Where to store child TID,
-                                    in parent's memory (pid_t *) */
-               u64 exit_signal;  /* Signal to deliver to parent on
-                                    child termination */
-               u64 stack;        /* Pointer to lowest byte of stack */
-               u64 stack_size;   /* Size of stack */
-               u64 tls;          /* Location of new TLS */
-               u64 set_tid;      /* Pointer to a pid_t array
-                                    (since Linux 5.5) */
-               u64 set_tid_size; /* Number of elements in set_tid
-                                    (since Linux 5.5) */
-               u64 cgroup;       /* File descriptor for target cgroup
-                                    of child (since Linux 5.7) */
-    };
-*/
 
 #[allow(dead_code)]
 #[repr(C)]
@@ -198,7 +104,7 @@ impl Clone3 {
         self
     }
 
-    pub(crate) fn build<'a>(self, mut cb: Box<dyn FnMut() -> isize + 'a>) ->  anyhow::Result<Pid> {
+    pub(crate) fn build(self) ->  anyhow::Result<Pid> {
         if self.flags & CLONE_PIDFD != 0 && self.pid_fd.is_none() {
             anyhow::bail!("CLONE_PIDFD set but no pid_fd provided")
         }
@@ -229,12 +135,13 @@ impl Clone3 {
             None => (0u64, 0u64),
             Some(s) => (s.as_ptr() as u64, s.len() as u64),
         };
-        let tls = self.tls.map_or(0, |v| {v as u64});
+        let tls = self.tls.map_or(0, |v| v);
+        //let tls = self.tls.map_or(0, |v| {v as u64});
         let (set_tid_ptr, set_tid_size) = match self.set_tid {
             None => (0u64, 0u64),
             Some(v) => (v.as_ptr() as u64, v.len() as u64),
         };
-        let cgroup = self.cgroup.map_or(0, |fd| {fd as u64}) as u64;
+        let cgroup = self.cgroup.map_or(0, |fd| {fd as u64});
 
         let clone_args = CloneArgs {
             flags,
@@ -256,16 +163,9 @@ impl Clone3 {
 
         if pid < 0 {
             let errno = unsafe { *libc::__errno_location() };
-            println!("errno: {}", errno);
-            println!("error: {}", std::io::Error::from_raw_os_error(errno));
-            return Err(anyhow::anyhow!("clone3 failed: {}", std::io::Error::last_os_error()))
+            return Err(anyhow::anyhow!("clone3 failed: errno {}: {}", errno, std::io::Error::last_os_error()))
         }
 
-        if pid == 0 {
-            let res = cb();
-            unsafe { libc::_exit(res as i32) };
-        }
-        
         Ok(Pid::from_raw(pid as i32))
     }
 }

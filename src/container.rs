@@ -26,9 +26,10 @@ use crate::cgroup::{
 use crate::namespace::{
     make_child_private,
     set_child_hostname,
-    bind_mount_child,
+    pre_pivot_mount,
     do_pivot_root,
-    mount_child_proc,
+    post_pivot_mount,
+    do_default_mounts,
 };
 
 use crate::network::create_network;
