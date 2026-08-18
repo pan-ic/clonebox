@@ -25,7 +25,8 @@ impl Writer {
     }
 
     fn pad_to_align(&mut self) {
-        while self.buf.len() % 4 != 0 {
+        //while self.buf.len() % 4 != 0 
+        while !self.buf.len().is_multiple_of(4) {
             self.buf.push(0);
         }
     }
@@ -89,7 +90,7 @@ pub struct Reader<'a> {
 #[allow(unused)]
 impl Reader<'_> {
     fn check_bound(&self, n: usize) -> bool {
-        return (n + self.cursor) < self.buf.len() as usize
+        (n + self.cursor) < self.buf.len()
     }
 
     fn _skip_to_align(&mut self) {
@@ -180,6 +181,7 @@ struct Rtmsg {
     rtm_flags: u32,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rtmsg_builder(rtm_family: u8,
     rtm_dst_len: u8,
     rtm_src_len: u8,
@@ -293,7 +295,7 @@ fn create_netlink_socket() -> anyhow::Result<OwnedFd> {
         Some(SockProtocol::NetlinkRoute))?;
 
     let addr = NetlinkAddr::new(0, 0);
-    let _ = bind(socket.as_raw_fd(), &addr)?;
+    bind(socket.as_raw_fd(), &addr)?;
     Ok(socket)
 }
 
@@ -345,14 +347,13 @@ fn create_veth_pair(socket: BorrowedFd, w: &mut Writer, host: &str, peer: &str) 
     let pos = w.pos() as u32;
     w.buf[0..4].copy_from_slice(&pos.to_ne_bytes());
     
-    let n = send(socket.as_raw_fd(),
+    let _ = send(socket.as_raw_fd(),
         &w.buf,
         MsgFlags::MSG_WAITALL)?;
     w.flush();
 
     recv_ack(socket.as_fd())?;
 
-    println!("{} bytes sent", n);
     Ok(())
 }
 
@@ -375,14 +376,13 @@ fn set_interface_up(socket: BorrowedFd, w: &mut Writer, iface_id: u32) -> anyhow
     let total_len = w.pos() as u32;
     w.buf[0..4].copy_from_slice(&total_len.to_ne_bytes());
 
-    let n = send(socket.as_raw_fd(),
+    let _ = send(socket.as_raw_fd(),
         &w.buf,
         MsgFlags::MSG_WAITALL)?;
     w.flush();
 
     recv_ack(socket.as_fd())?;
 
-    println!("{} bytes sent", n);
     Ok(())
 }
 
@@ -395,7 +395,7 @@ fn set_ip_addr(socket: BorrowedFd, w: &mut Writer, iface_id: u32, ip: Ipv4Addr, 
         0);
     let ifaddr = ifaddrmsg_builder(
         libc::AF_INET as u8,
-        prefix_len as u8,
+        prefix_len, //as u8
         0,
         libc::RT_SCOPE_UNIVERSE,
         iface_id);
@@ -416,14 +416,13 @@ fn set_ip_addr(socket: BorrowedFd, w: &mut Writer, iface_id: u32, ip: Ipv4Addr, 
     let total_len = w.pos() as u32;
     w.buf[0..4].copy_from_slice(&total_len.to_ne_bytes());
     
-    let n = send(socket.as_raw_fd(),
+    let _ = send(socket.as_raw_fd(),
         &w.buf,
         MsgFlags::MSG_WAITALL)?;
     w.flush();
 
     recv_ack(socket.as_fd())?;
 
-    println!("{} bytes sent", n);
     Ok(())
 }
 
@@ -455,14 +454,13 @@ fn move_to_netns(socket: BorrowedFd,
     let total_len = w.pos() as u32;
     w.buf[0..4].copy_from_slice(&total_len.to_ne_bytes());
 
-    let n = send(socket.as_raw_fd(),
+    let _ = send(socket.as_raw_fd(),
         &w.buf,
         MsgFlags::MSG_WAITALL)?;
     w.flush();
 
     recv_ack(socket.as_fd())?;
 
-    println!("{} bytes sent", n);
     Ok(())
 }
 
@@ -499,14 +497,14 @@ fn get_interface_index(socket: BorrowedFd, w: &mut Writer, i_name: &str) -> anyh
     let total_len = w.pos() as u32;
     w.buf[0..4].copy_from_slice(&total_len.to_ne_bytes());
 
-    let send_bytes = send(socket.as_raw_fd(),
+    let _ = send(socket.as_raw_fd(),
         &w.buf,
         MsgFlags::MSG_WAITALL)?;
     w.flush();
 
     let mut b: [u8; 4096] = [0u8; 4096];
 
-    let recv_bytes = recv(socket.as_raw_fd(), &mut b, MsgFlags::empty())?;
+    let _ = recv(socket.as_raw_fd(), &mut b, MsgFlags::empty())?;
 
     let nlmsg = unsafe { &*(b.as_ptr() as *const nlmsghdr) };
 
@@ -519,7 +517,6 @@ fn get_interface_index(socket: BorrowedFd, w: &mut Writer, i_name: &str) -> anyh
 
     let ifinfo = unsafe { &*(b.as_ptr().add(size_of::<nlmsghdr>()) as *const ifinfomsg) };
 
-    println!("{} bytes sent, {} bytes recv", send_bytes, recv_bytes);
     Ok(ifinfo.ifi_index as u32)
 }
 
@@ -553,47 +550,50 @@ fn add_default_route(socket: BorrowedFd, w: &mut Writer, ip: Ipv4Addr) -> anyhow
     let total_len = w.pos() as u32;
     w.buf[0..4].copy_from_slice(&total_len.to_ne_bytes());
 
-    let n = send(socket.as_raw_fd(),
+    let _ = send(socket.as_raw_fd(),
         &w.buf,
         MsgFlags::MSG_WAITALL)?;
     w.flush();
 
     recv_ack(socket.as_fd())?;
 
-    println!("{} bytes sent", n);
     Ok(())
 }
 
-pub(crate) fn create_network(child_pid: &Pid) -> anyhow::Result<()> {
+pub(crate) fn create_network(container_id: &str, child_pid: &Pid) -> anyhow::Result<()> {
     let host_ns_fd = File::open("/proc/self/ns/net")?;
     let peer_ns_fd = File::open(format!("/proc/{}/ns/net", child_pid.as_raw()))?;
-    let host = "veth1";
+    let suffix = &container_id[..container_id.len().min(9)];
+    let host = suffix;
+    // TODO: IP addresses are hardcoded (10.0.0.1/10.0.0.2)
+    // Multiple containers will conflict. Production requires dynamic IP allocation
+    // per container, e.g. derived from container ID or managed pool.
     let host_address = Ipv4Addr::new(10, 0, 0, 1);
     let peer_address = Ipv4Addr::new(10, 0, 0, 2);
-    let peer = "veth1_peer";
+    let peer = format!("{}_peer", suffix);
     let mut w = Writer {
         buf: Vec::new(),
     };
     
     let host_sk = create_netlink_socket()?;
-    let _ = create_veth_pair(host_sk.as_fd(), &mut w, host, peer)?;
+    create_veth_pair(host_sk.as_fd(), &mut w, host, &peer)?;
     let host_i_id = get_interface_index(host_sk.as_fd(), &mut w, host)?;
-    let _ = set_ip_addr(host_sk.as_fd(), &mut w, host_i_id, host_address, 24u8)?;
-    let _ = set_interface_up(host_sk.as_fd(), &mut w, host_i_id)?;
-    let child_i_id = get_interface_index(host_sk.as_fd(), &mut w, peer)?; 
-    let _ = move_to_netns(host_sk.as_fd(), &mut w, &child_i_id, &peer_ns_fd)?;
+    set_ip_addr(host_sk.as_fd(), &mut w, host_i_id, host_address, 24u8)?;
+    set_interface_up(host_sk.as_fd(), &mut w, host_i_id)?;
+    let child_i_id = get_interface_index(host_sk.as_fd(), &mut w, &peer)?; 
+    move_to_netns(host_sk.as_fd(), &mut w, &child_i_id, &peer_ns_fd)?;
 
-    let _ = setns(peer_ns_fd.as_fd(), CloneFlags::CLONE_NEWNET)?;
+    setns(peer_ns_fd.as_fd(), CloneFlags::CLONE_NEWNET)?;
 
     let child_sk = create_netlink_socket()?;
-    let _ = set_ip_addr(child_sk.as_fd(), &mut w, child_i_id, peer_address, 24u8)?;
-    let _ = set_interface_up(child_sk.as_fd(), &mut w, child_i_id)?;
-    let _ = set_interface_up(child_sk.as_fd(), &mut w, 1)?;
-    let _ = add_default_route(child_sk.as_fd(), &mut w, host_address)?;
+    set_ip_addr(child_sk.as_fd(), &mut w, child_i_id, peer_address, 24u8)?;
+    set_interface_up(child_sk.as_fd(), &mut w, child_i_id)?;
+    set_interface_up(child_sk.as_fd(), &mut w, 1)?;
+    add_default_route(child_sk.as_fd(), &mut w, host_address)?;
 
     drop(child_sk);
 
-    let _ = setns(host_ns_fd.as_fd(), CloneFlags::CLONE_NEWNET)?;
+    setns(host_ns_fd.as_fd(), CloneFlags::CLONE_NEWNET)?;
 
     // TODO: replace with NETLINK_NETFILTER implementation
     // iptables NAT rule: masquerade container traffic through host interface
