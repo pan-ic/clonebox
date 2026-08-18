@@ -33,7 +33,88 @@ use crate::namespace::{
 
 use crate::network::create_network;
 
-#[allow(unreachable_code)]
+use crate::state::{
+    ContainerState,
+    State,
+    get_bundle_path,
+    write_state_file,
+    read_state_file,
+    update_state,
+};
+
+use crate::runtime::{
+    connect_create_process,
+    Runtime,
+};
+
+use crate::config::Config;
+
+use crate::logger::{
+    open_log_file,
+    write_log_file,
+};
+
+fn cleanup(container_id: &str, force: bool) -> anyhow::Result<()> {
+    let cgroup_path = format!("/sys/fs/cgroup/clonebox/{}", container_id);
+    let bundle_path = get_bundle_path(container_id);
+
+    //switch to best effort when tests are implemented
+    if force {
+        remove_dir(&cgroup_path).ok();
+        remove_dir_all(bundle_path).ok();
+        return Ok(())
+    }
+
+    remove_dir(&cgroup_path).context("failed to clean cgroups")?;
+    remove_dir_all(&bundle_path).context("failed to clean container bundle")?;
+
+    Ok(())
+}
+
+fn to_cstring_vec(v: Vec<String>) -> Vec<CString> {
+    v.iter()
+        .map(|s| CString::new(s.as_str()).unwrap())
+        .collect()
+}
+
+#[allow(unused)]
+fn container_exec(args: Option<Vec<String>>,
+    env: Option<Vec<String>>,
+    cwd: Option<&str>,
+    mut log_fd: &mut File) -> ! {
+    let args = args.unwrap_or_default();
+
+    if args.is_empty() {
+        let _ = nix_write(std::io::stderr(), b"no args provided\n");
+        unsafe { libc::_exit(1) }
+    }
+
+    let path = &args[0].clone();
+
+    let c_path = CString::new(path.as_str()).unwrap_or_else(|_| {
+        let _ = nix_write(std::io::stderr(), b"invalid path\n");
+        unsafe { libc::_exit(1) }
+    });
+    let ca: Vec<CString> = to_cstring_vec(args);
+    let ce: Vec<CString> = to_cstring_vec(env.unwrap_or_default());
+
+    if let Some(cwd) = cwd {
+        let c_cwd = CString::new(cwd).unwrap_or_else(|_| {
+            let _ = nix_write(std::io::stderr(), b"invalid cwd\n");
+            unsafe { libc::_exit(1) }
+        });
+        unsafe { libc::chdir(c_cwd.as_ptr()) };
+    }
+
+    let Err(e) = execve(&c_path, &ca, &ce);
+    let e = format!("Execve failure: {}\n", e);
+    #[allow(unused)]
+    write_log_file(log_fd, &e);
+    unsafe {
+        libc::_exit(1);
+    }
+}
+
 #[cfg(target_os = "linux")]
 pub fn create(container_id: &str, config_path: &str) -> anyhow::Result<()> {
     let bundle_path = get_bundle_path(container_id);
