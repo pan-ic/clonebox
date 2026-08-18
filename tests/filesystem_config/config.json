@@ -1,0 +1,34 @@
+{
+    "ociVersion": "1.0.1",
+    "process": {
+        "args": [
+            "/bin/sleep",
+            "30"
+        ],
+        "env": [
+            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "TERM=xterm"
+        ],
+        "cwd": "/"
+    },
+    "root": {
+        "path": "/home/debian/clonebox/alpine_fs",
+        "readonly": true
+    },
+    "hostname": "clobenox",
+    "mounts": [
+        {
+            "destination": "/proc",
+            "type": "proc",
+            "source": "proc"
+        },
+        {
+            "destination": "/data",
+            "type": "none",
+            "source": "/home/bind",
+            "options": [
+                "bind"
+            ]
+        }
+    ]
+}
