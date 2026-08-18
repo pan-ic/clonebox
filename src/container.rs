@@ -1,14 +1,15 @@
 use anyhow::Context;
 #[cfg(target_os = "linux")]
 use nix::{
-    sched::{CloneCb, CloneFlags, clone},
+    sched::{CloneFlags, setns},
     sys::{wait::waitpid, signal::Signal},
-    unistd::{Pid, execve, getpid, write as nix_write},
+    unistd::{Pid, execve, fork, ForkResult, getpid, write as nix_write},
 };
 use std::{
-    ffi::{CString, c_int},
-    fs::remove_dir,
-    os::fd::{AsRawFd, OwnedFd, RawFd},
+    ffi::CString,
+    fs::{create_dir_all, File, remove_dir, remove_dir_all},
+    os::fd::{AsFd, AsRawFd},
+    path::Path,
 };
 
 use crate::clone3::Clone3;
@@ -79,15 +80,24 @@ pub fn create_child_process(name: &str, cmd: &str) -> anyhow::Result<()> {
         | CloneFlags::CLONE_NEWNET;
     let signal: Option<Signal> = Some(nix::sys::signal::Signal::SIGCHLD);
 
-    println!("Parent pid is {}", parent_pid);
+    runtime.parent_child_pipe().context("failed to create pipe")?;
 
     let (child_cgroup_path, child_cgroup_fd) = create_cgroup(name)?;
 
     let os_resources = vec!["cpu", "memory"];
     let app_resources = vec!["cpu", "memory"];
 
-    init_resources(get_root_cgroup_path(), &os_resources);
-    init_resources(get_app_cgroup_path(), &app_resources);
+    create_network(container_id, &child_pid).context("failed to create network")?;
+
+    let child_cgroup_path = get_child_cgroup_path(container_id);
+    set_cgroup(&child_cgroup_path, "cpu", "max","100000 100000")?;
+    set_cgroup(&child_cgroup_path, "memory", "max", "256M")?;
+
+    update_state(container_id, |s| {s.set_created(child_pid.as_raw())})
+        .context("failed to update container state")?;
+
+    runtime.parent_proc_socket(container_id).context("failed to create unix socket")?;
+    runtime.unfreeze_child().context("failed to write into pipe")?;
 
     unsafe {
         child_pid = Clone3::new(signal)
