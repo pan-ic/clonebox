@@ -1,23 +1,14 @@
 mod cgroup;
+mod clone3;
+mod config;
 mod container;
+mod logger;
 mod namespace;
 mod network;
-mod clone3;
 mod runtime;
 mod state;
-mod config;
-mod logger;
 
-use crate::container::{
-    create,
-    start,
-    state,
-    kill,
-    delete,
-    pause,
-    resume,
-    exec,
-};
+use crate::container::{create, delete, exec, kill, pause, resume, start, state};
 use clap::{Parser, Subcommand};
 use std::fs::create_dir_all;
 
@@ -44,7 +35,7 @@ enum Commands {
         container_id: String,
     },
     #[command(arg_required_else_help = true)]
-    State{
+    State {
         #[arg(required = true)]
         container_id: String,
     },
@@ -76,7 +67,7 @@ enum Commands {
         container_id: String,
         #[arg(required = true)]
         cmd: String,
-    }
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -84,27 +75,33 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.cmd {
-        Commands::Create { container_id, config } => {
+        Commands::Create {
+            container_id,
+            config,
+        } => {
             create(&container_id, &config)?;
-        },
+        }
         Commands::Start { container_id } => {
             start(&container_id)?;
         }
         Commands::State { container_id } => {
             state(&container_id)?;
-        },
+        }
         Commands::Kill { container_id } => {
             kill(&container_id)?;
-        },
-        Commands::Delete { container_id, force} => {
+        }
+        Commands::Delete {
+            container_id,
+            force,
+        } => {
             delete(&container_id, force)?;
-        },
+        }
         Commands::Pause { container_id } => {
             pause(&container_id)?;
-        },
+        }
         Commands::Resume { container_id } => {
             resume(&container_id)?;
-        },
+        }
         Commands::Exec { container_id, cmd } => {
             exec(&container_id, &cmd)?;
         }
@@ -118,15 +115,19 @@ mod tests {
 
     #[test]
     fn cli_parse() {
-        let cli =
-            Cli::try_parse_from(["clonebox", "create", "test", "tests_config"]).unwrap();
+        let cli = Cli::try_parse_from(["clonebox", "create", "test", "tests_config"]).unwrap();
 
         match cli.cmd {
-            Commands::Create { container_id, config } => {
+            Commands::Create {
+                container_id,
+                config,
+            } => {
                 assert_eq!(container_id, "test");
                 assert_eq!(config, "tests_config");
             }
-            _ => { panic!("KO") }
+            _ => {
+                panic!("KO")
+            }
         };
     }
 }

@@ -1,10 +1,10 @@
 use anyhow::Context;
+use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     fmt::{Display, Formatter},
     fs::{read_to_string, write},
-    collections::HashMap,
 };
-use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -20,10 +20,10 @@ impl Display for ContainerState {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
             ContainerState::Creating => write!(f, "creating"),
-            ContainerState::Created  => write!(f, "created"),
-            ContainerState::Running  => write!(f, "running"),
-            ContainerState::Stopped  => write!(f, "stopped"),
-            ContainerState::Paused  => write!(f, "paused"),
+            ContainerState::Created => write!(f, "created"),
+            ContainerState::Running => write!(f, "running"),
+            ContainerState::Stopped => write!(f, "stopped"),
+            ContainerState::Paused => write!(f, "paused"),
         }?;
 
         Ok(())
@@ -48,7 +48,8 @@ impl State {
         status: ContainerState,
         pid: Option<i32>,
         bundle: String,
-        annotations: Option<HashMap<String, String>>) -> Self {
+        annotations: Option<HashMap<String, String>>,
+    ) -> Self {
         State {
             oci_version,
             id,
@@ -62,12 +63,12 @@ impl State {
     pub(crate) fn get_pid(&self) -> Option<i32> {
         self.pid
     }
-    
+
     #[allow(unused)]
     pub(crate) fn set_pid(&mut self, pid: i32) {
         self.pid = Some(pid);
     }
-    
+
     pub(crate) fn get_state(&self) -> ContainerState {
         self.status
     }
@@ -93,10 +94,11 @@ impl State {
 
 impl Display for State {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(f, "oci-version: {},\nid: {},\nstatus: {},\n", 
-                     self.oci_version,
-                     self.id,
-                     self.status)?;
+        write!(
+            f,
+            "oci-version: {},\nid: {},\nstatus: {},\n",
+            self.oci_version, self.id, self.status
+        )?;
         if let Some(pid) = self.pid {
             writeln!(f, "pid: {},", pid)?;
         } else {
@@ -126,7 +128,7 @@ pub(crate) fn get_state_path(container_id: &str) -> String {
     format!("{}/state.json", bundle_path)
 }
 
-pub(crate) fn write_state_file(container_id: &str, state: &State) -> anyhow::Result<()>{
+pub(crate) fn write_state_file(container_id: &str, state: &State) -> anyhow::Result<()> {
     let path = get_state_path(container_id);
     let ser_json = serde_json::to_string(state).context("Failed to serialize state.json")?;
 
@@ -140,7 +142,7 @@ pub(crate) fn read_state_file(container_id: &str) -> anyhow::Result<State> {
         Ok(buf) => Ok(serde_json::from_str(&buf).context("Failed to deserialize state.json")?),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             anyhow::bail!("{}: container not found", container_id)
-        },
+        }
         Err(e) => Err(e.into()),
     }
 }
@@ -154,4 +156,3 @@ where
     write_state_file(container_id, &state)?;
     Ok(state)
 }
-

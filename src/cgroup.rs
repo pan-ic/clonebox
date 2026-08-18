@@ -1,11 +1,6 @@
 use anyhow::Context;
 use std::{
-    fs::{
-        create_dir_all,
-        read_to_string,
-        write,
-        File,
-    },
+    fs::{File, create_dir_all, read_to_string, write},
     os::fd::OwnedFd,
 };
 
@@ -23,30 +18,44 @@ pub(crate) fn get_child_cgroup_path(name: &str) -> String {
 
 fn enable_controller(path: &str, resource: &str) -> anyhow::Result<()> {
     let controllers_path = format!("{}{}", path, "/cgroup.controllers");
-    let available = read_to_string(controllers_path).with_context(|| format!("failed to read cgroup.controllers: {}", resource))?;
+    let available = read_to_string(controllers_path)
+        .with_context(|| format!("failed to read cgroup.controllers: {}", resource))?;
     if !available.contains(resource) {
         anyhow::bail!("controller {} not available on this system", resource);
     }
 
     let subtree_path = format!("{}{}", path, "/cgroup.subtree_control");
-    let enabled = read_to_string(&subtree_path).with_context(|| format!("failed to read cgroup.subtree: {}: ", resource))?;
+    let enabled = read_to_string(&subtree_path)
+        .with_context(|| format!("failed to read cgroup.subtree: {}: ", resource))?;
     if !enabled.contains(resource) {
-        write(subtree_path, format!("+{}", resource)).context("failed to write into subtree_path")?;
+        write(subtree_path, format!("+{}", resource))
+            .context("failed to write into subtree_path")?;
     }
     Ok(())
 }
 
-pub(crate) fn set_cgroup(instance: &str, resource: &str, key: &str, value: &str) -> anyhow::Result<()> { 
+pub(crate) fn set_cgroup(
+    instance: &str,
+    resource: &str,
+    key: &str,
+    value: &str,
+) -> anyhow::Result<()> {
     let cgroup_file = format!("{}/{}.{}", instance, resource, key);
 
-    write(cgroup_file, value).with_context(|| format!("failed to change {}.{} cgroup value:{} for {}", resource, key, value, instance))?;
-    
+    write(cgroup_file, value).with_context(|| {
+        format!(
+            "failed to change {}.{} cgroup value:{} for {}",
+            resource, key, value, instance
+        )
+    })?;
+
     Ok(())
 }
 
 pub(crate) fn init_resources(instance: &str, resources: &Vec<&str>) -> anyhow::Result<()> {
     for resource in resources {
-        enable_controller(instance, resource).with_context(|| { format!("failed to enable {} {} cgroup", instance, resource)})?;
+        enable_controller(instance, resource)
+            .with_context(|| format!("failed to enable {} {} cgroup", instance, resource))?;
     }
 
     Ok(())
@@ -59,6 +68,6 @@ pub(crate) fn create_cgroup(name: &str) -> anyhow::Result<(String, OwnedFd)> {
     create_dir_all(app_cgroup_path).context("failed to create clonebox cgroup dir")?;
     create_dir_all(&child_cgroup).context("failed to create child cgroup dir")?;
     let fd = File::open(&child_cgroup)?;
-    
+
     Ok((child_cgroup, OwnedFd::from(fd)))
 }

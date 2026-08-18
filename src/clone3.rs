@@ -1,15 +1,12 @@
-use libc::{syscall};
-use nix::{
-    sys::signal::Signal,
-    unistd::Pid,
-};
+use libc::syscall;
+use nix::{sys::signal::Signal, unistd::Pid};
 use std::os::fd::RawFd;
 
-pub const CLONE_PIDFD: u64          = 0x00001000;
-pub const CLONE_PARENT_SETTID: u64  = 0x00100000;
-pub const CLONE_CHILD_SETTID: u64   = 0x01000000;
-pub const CLONE_SETTLS: u64         = 0x00080000;
-pub const CLONE_INTO_CGROUP: u64    = 0x200000000;
+pub const CLONE_PIDFD: u64 = 0x00001000;
+pub const CLONE_PARENT_SETTID: u64 = 0x00100000;
+pub const CLONE_CHILD_SETTID: u64 = 0x01000000;
+pub const CLONE_SETTLS: u64 = 0x00080000;
+pub const CLONE_INTO_CGROUP: u64 = 0x200000000;
 #[allow(dead_code)]
 const SYS_CLONE3: i64 = 435;
 
@@ -40,8 +37,7 @@ pub(crate) struct Clone3 {
     tls: Option<u64>,
     set_tid: Option<Vec<Pid>>,
     cgroup: Option<RawFd>,
-} 
-
+}
 
 #[allow(dead_code)]
 impl Clone3 {
@@ -80,7 +76,7 @@ impl Clone3 {
         self.child_tid = Some(id);
         self
     }
-    
+
     pub(crate) fn parent_tid(mut self, id: Pid) -> Self {
         self.flags |= CLONE_PARENT_SETTID;
         self.parent_tid = Some(id);
@@ -104,7 +100,7 @@ impl Clone3 {
         self
     }
 
-    pub(crate) fn build(self) ->  anyhow::Result<Pid> {
+    pub(crate) fn build(self) -> anyhow::Result<Pid> {
         if self.flags & CLONE_PIDFD != 0 && self.pid_fd.is_none() {
             anyhow::bail!("CLONE_PIDFD set but no pid_fd provided")
         }
@@ -125,12 +121,11 @@ impl Clone3 {
             anyhow::bail!("CLONE_INTO_CGROUP set but no cgroup fd provided")
         }
 
-        
         let flags = self.flags;
-        let pidfd = self.pid_fd.map_or(0, |fd| {fd as u64});
-        let child_tid = self.child_tid.map_or(0, |pid| {pid.as_raw() as u64});
-        let parent_tid = self.parent_tid.map_or(0, |pid| {pid.as_raw() as u64});
-        let exit_signal = self.exit_signal.map_or(0, |signal| {signal as u64});
+        let pidfd = self.pid_fd.map_or(0, |fd| fd as u64);
+        let child_tid = self.child_tid.map_or(0, |pid| pid.as_raw() as u64);
+        let parent_tid = self.parent_tid.map_or(0, |pid| pid.as_raw() as u64);
+        let exit_signal = self.exit_signal.map_or(0, |signal| signal as u64);
         let (stack_ptr, stack_size) = match &self.stack {
             None => (0u64, 0u64),
             Some(s) => (s.as_ptr() as u64, s.len() as u64),
@@ -141,7 +136,7 @@ impl Clone3 {
             None => (0u64, 0u64),
             Some(v) => (v.as_ptr() as u64, v.len() as u64),
         };
-        let cgroup = self.cgroup.map_or(0, |fd| {fd as u64});
+        let cgroup = self.cgroup.map_or(0, |fd| fd as u64);
 
         let clone_args = CloneArgs {
             flags,
@@ -158,12 +153,20 @@ impl Clone3 {
         };
 
         let pid = unsafe {
-            syscall(SYS_CLONE3, &clone_args as *const CloneArgs, size_of::<CloneArgs>())
+            syscall(
+                SYS_CLONE3,
+                &clone_args as *const CloneArgs,
+                size_of::<CloneArgs>(),
+            )
         };
 
         if pid < 0 {
             let errno = unsafe { *libc::__errno_location() };
-            return Err(anyhow::anyhow!("clone3 failed: errno {}: {}", errno, std::io::Error::last_os_error()))
+            return Err(anyhow::anyhow!(
+                "clone3 failed: errno {}: {}",
+                errno,
+                std::io::Error::last_os_error()
+            ));
         }
 
         Ok(Pid::from_raw(pid as i32))

@@ -40,7 +40,8 @@ impl Config {
         let config_file = format!("{}/config.json", config_path);
         let raw_conf = read_to_string(&config_file)
             .with_context(|| format!("failed to read {}", config_file))?;
-        let config: Config = serde_json::from_str(&raw_conf).context("failed to desirialize config")?;
+        let config: Config =
+            serde_json::from_str(&raw_conf).context("failed to desirialize config")?;
 
         Ok(config)
     }
