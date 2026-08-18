@@ -64,32 +64,16 @@ pub fn create(container_id: &str, config_path: &str) -> anyhow::Result<()> {
     write_state_file(container_id, &state).context("failed to write state")?;
 
     //TODO: replace what can be repaced by config parsing
-    //note that variable might move in the clone call back if not needed elsewhere (and so, won't have
-    //to be static), will be determined during refacto
-    let new_root: &'static str = "/home/debian/clonebox/alpine_fs";
-    let mount_proc: &'static str = "proc";
-    let mount_proc_path: &'static str = "/proc";
-    let put_old: &'static str = "/put_old";
-    let child_old_path: &'static str = "/home/debian/clonebox/alpine_fs/put_old";
+    let new_root = config.get_root_path();
+    let empty = vec![];
+    let mounts = config.get_mounts().unwrap_or(&empty);
+    
+    let (_, child_cgroup_fd) = create_cgroup(container_id).context("failed to create cgroup")?;
+    let os_resources = vec!["cpu", "memory"];
+    let app_resources = vec!["cpu", "memory"];
+    init_resources(get_root_cgroup_path(), &os_resources).context("failed to init host resources")?;
+    init_resources(get_app_cgroup_path(), &app_resources).context("failed to init clonebox resources")?;
 
-    let cb: CloneCb = Box::new(|| -> isize {
-        make_child_private();
-        set_child_hostname(name);
-        bind_mount_child(new_root);
-        do_pivot_root(child_old_path, new_root, put_old);
-        mount_child_proc(mount_proc, mount_proc_path);
-
-        let Err(e) = execve(&path, &ca, &[] as &[CString]);
-        let e = format!("execve failed: {}\n", e);
-        //write might fail but we are about to exit anyway
-        let _ = nix_write(std::io::stderr(), e.as_bytes());
-        unsafe {
-            libc::_exit(1);
-        }
-        0
-    });
-
-    //clone() call variables
     let clone_flags: CloneFlags = CloneFlags::CLONE_NEWPID
         | CloneFlags::CLONE_NEWUTS
         | CloneFlags::CLONE_NEWNS
@@ -98,10 +82,27 @@ pub fn create(container_id: &str, config_path: &str) -> anyhow::Result<()> {
 
     runtime.parent_child_pipe().context("failed to create pipe")?;
 
-    let (child_cgroup_path, child_cgroup_fd) = create_cgroup(name)?;
+    let child_pid: Pid = Clone3::new(signal)
+        .flags(clone_flags.bits() as u64)
+        .cgroup(child_cgroup_fd.as_raw_fd())
+        .build()
+        .context("clone failure")?;
 
-    let os_resources = vec!["cpu", "memory"];
-    let app_resources = vec!["cpu", "memory"];
+    if child_pid == Pid::from_raw(0) {
+        make_child_private();
+        set_child_hostname(&config.get_hostname().unwrap_or("none".to_string()));
+        let new_root = pre_pivot_mount(&bundle_path, new_root, mounts);
+        do_pivot_root(&new_root);
+        post_pivot_mount(mounts);
+        do_default_mounts();
+        
+        runtime.freeze_child().context("failed to freeze child")?;
+        
+        container_exec(config.get_process_args(), 
+            config.get_process_env(), 
+            Some(config.get_process_cwd()),
+            &mut log_fd);
+    }
 
     create_network(container_id, &child_pid).context("failed to create network")?;
 
@@ -115,28 +116,6 @@ pub fn create(container_id: &str, config_path: &str) -> anyhow::Result<()> {
     runtime.parent_proc_socket(container_id).context("failed to create unix socket")?;
     runtime.unfreeze_child().context("failed to write into pipe")?;
 
-    unsafe {
-        child_pid = Clone3::new(signal)
-            .flags(clone_flags.bits() as u64)
-            .cgroup(child_cgroup_fd.as_raw_fd())
-            .build(Box::new(cb))
-            .context("clone failure")?;
-    }    
-
-    create_network(&child_pid)?;
-
-    let child_resources = vec!["cpu", "memory"];
-    let child_cgroup_path = get_child_cgroup_path(&name);
-    init_resources(&child_cgroup_path, &child_resources);
-    set_cgroup(&child_cgroup_path, child_resources[0],"max","100000 100000")?;
-    set_cgroup(&child_cgroup_path, child_resources[1], "max", "256M")?;
-
-    std::fs::write("/proc/sys/net/ipv4/ip_forward", "1")?;
-    std::process::Command::new("iptables")
-        .args(["-t", "nat", "-A", "POSTROUTING", "-s", "10.0.0.0/24", "-o", "ens2", "-j", "MASQUERADE"])
-        .status()?;
-
-    println!("Child pid is {}", child_pid);
     let child_return = waitpid(child_pid, None).context("waitpid failure")?;
     let log_child_return = format!("{:?}\n", child_return);
     #[allow(unused)]
