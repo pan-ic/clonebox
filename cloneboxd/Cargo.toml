@@ -2,3 +2,17 @@
 name = "cloneboxd"
 version = "0.1.0"
 edition = "2024"
+
+[[bin]]
+name = "clonebox-test-client"
+path = "src/bin/clonebox_test_client.rs"
+
+[dependencies]
+tonic = "*"
+prost = "0.14"
+tonic-prost = "*"
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+clonebox-core = { path = "../clonebox-core" }
+
+[build-dependencies]
+tonic-prost-build = "*"

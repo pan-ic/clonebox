@@ -1,6 +1,19 @@
 syntax = "proto3";
 package clonebox_tasks;
 
+service CloneboxTasks {
+  rpc Create(CreateRequest) returns (CreateResponse);
+  rpc Start(StartRequest) returns (StartResponse);
+  rpc State(StateRequest) returns (StateResponse);
+  rpc Kill(KillRequest) returns (KillResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc Pause(PauseRequest) returns (PauseResponse);
+  rpc Resume(ResumeRequest) returns (ResumeResponse);
+  rpc Exec(ExecRequest) returns (ExecResponse);
+  rpc Wait(WaitRequest) returns (WaitResponse);
+  rpc List(ListRequest) returns (ListResponse);
+}
+
 enum ContainerState {
   CONTAINER_STATE_UNKNOWN = 0;
   CREATING = 1;
@@ -23,68 +36,55 @@ message CreateRequest {
   string container_id = 1;
   string config_path = 2;
 }
-message CreateReply {}
+message CreateResponse {}
 
 message StartRequest {
   string container_id = 1;
 }
-message StartReply {}
+message StartResponse {}
 
 message StateRequest {
   string container_id = 1;
 }
-message StateReply {
+message StateResponse {
   State state = 1;
 }
 
 message KillRequest {
   string container_id = 1;
 }
-message KillReply {}
+message KillResponse {}
 
 message DeleteRequest {
   string container_id = 1;
   optional bool force = 2;
 }
-message DeleteReply {}
+message DeleteResponse {}
 
 message PauseRequest {
  string container_id = 1; 
 }
-message PauseReply {}
+message PauseResponse {}
 
 message ResumeRequest {
   string container_id = 1;
 }
-message ResumeReply {}
+message ResumeResponse {}
 
 message ExecRequest {
   string container_id = 1;
   repeated string commands = 2;
 }
-message ExecReply {}
+message ExecResponse {}
 
 message WaitRequest {
   string id = 1;
 }
-message WaitReply {
+message WaitResponse {
   int32 exit = 1;
 }
 
 message ListRequest {}
-message ListReply {
+message ListResponse {
   repeated State states = 1;
-}
-
-service CloneboxTasks {
-  rpc Create(CreateRequest) returns (CreateReply);
-  rpc Start(StartRequest) returns (StartReply);
-  rpc State(StateRequest) returns (StateReply);
-  rpc Kill(KillRequest) returns (KillReply);
-  rpc Delete(DeleteRequest) returns (DeleteReply);
-  rpc Pause(PauseRequest) returns (PauseReply);
-  rpc Resume(ResumeRequest) returns (ResumeReply);
-  rpc Exec(ExecRequest) returns (ExecReply;
-  rpc Wait(WaitRequest) returns (WaitReply);
-  rpc List(ListRequest) returns (ListReply);
 }

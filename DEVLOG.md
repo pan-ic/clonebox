@@ -219,3 +219,11 @@ The pros of protobuf and rpc are compatibilty (backward and forward) and flexibi
 -special rules for encoding where lower values fields use less place, then if increase per range with the values
 so the way the data is organized really matters and architecture must take into account potential future features.
 It also might creates big files with a lot of redundancy
+
+## 2026/08/20 Quiet session
+Skeleton of daemon rpc api created. Wired to a temporary client to check compilation. The needed imports for Tonic (the rust rpc framework, using prost for
+serialization) are a bit surprising at first:
+-syntax automatically translate form CamelCase to snake_case.
+-a mod with the name of the targeted .proto package must be created with an include macro inside
+-imports of services follow a special norm (ServiceName, ServiceNameServer, ServiceNameClient)
+-interface must implent all the methods referenced in .proto service

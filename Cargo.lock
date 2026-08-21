@@ -227,6 +227,7 @@ dependencies = [
 name = "cloneboxd"
 version = "0.1.0"
 dependencies = [
+ "clonebox-core",
  "prost",
  "tokio",
  "tonic",
