@@ -178,3 +178,44 @@ tests with threading else some resources conflict might happens because of execu
 test is a solo full function testing the whole state flow.
 Had also some troubles to test things independently and with multi threading without making a real mess on the host (that's equivalent to spawn a big amount of
 containers in a short time and due to well known limitation list, that creates a lot of conflicts)
+
+## 2026/08/17 Hard session
+Decided to enlarge project scope by creating a Cloneboxd daemon. The reason are that I hac rpc on my learning list since a while and had no real project that
+actually brings that into my scope. The fact that a runtime is essentilaly a back end tool that shouldn't be directly communicated with + the RPC power to
+generate all the runtime needed for data exchange betwen serve and client (no need to create a new API over clonebox) motivated me for the stack choose.
+The actual question was how to split teh current code between three different parts: clonebox (cli/client binary), cloneboxd (daemon/server binary) and
+clonebox-core (lib with all the core features that makes clonebox container runtime). I had to choose between 2 options on the spectrum of "what are the
+daemon tasks":
+-shim: that's how clonebox has been developped and the option I keep; the actual container runtime is also the parent/supervisor of the container. It holds a freeze
+until it receive the signal to let the child execute his process. The deamon keeps a track of the differents existing runtime and update the state.
+-daemon handled/absorbed: the daemon handle the runtime, the freeze and everyting. The point is that if the daemon crashes well everything crashes.
+Finally bringing a daemon into the scope helps me handle a Clonebox weakness: the state managment is currently handled by file writing; this is a decent enough
+solution for development purpose but brings problems:
+-updates may not be that accurate
+-a race condition may occur (ex 2 tasks modify the file almost in the same time, undefined behavior).
+Now with the demaon state managment is owned  by only one process; the daemon. It's both loaded in memory and written. Keeping a file helps for persistence and
+crash recovery.
+Finally bringing a daemon into scope helps address a Clonebox weakness: state management is currently handled by file writing; decent for development but brings problems:
+-updates may not be accurate
+-race condition possible (2 tasks modify the file near-simultaneously, undefined behavior).
+Target: state fully owned by cloneboxd (in-memory, file as write-through backup), supervisors report events instead of writing state themselves (single writer), race gone.
+Sequencing: RPC skeleton ships first with a halfway version (daemon reads/serializes access to state.json, supervisors still write it directly) to validate
+the architecture end-to-end. Full single-writer version comes after, once skeleton works.
+
+## 2026/08/18 Quiet session
+Clonebox repository split into: clonebox, cloneboxd and clonebox-core. clonebox becomes the client + cli that interfere with the daemon cloneboxd. Cloneboxd
+manage the sate and keep tracks of the containers, communicate directly with the parent processes that supervise containers. Clonebox-core are the core library
+that make container runtime working.
+Code refactor and optimization planned soon for the clonebox-core
+
+## 2026/08/19 Quiet session
+Deep dive into protocol buffers documentation, communication between different service amde easy and language agnostic. .proto file are the "data scheme" that
+you implement to serialize deserialize and communicate between services. Else data is sent as bytes over the wire. Then the app service will depend on a runtime
+implemented in the language used by the app (ex: for rust: tonic + prost (+ tokyo because of async dep)). That runtime will generate all the structure needed to
+load/deserialize, serialize data that is sent between app and needed accessor (getters/setters). That generated code is the compiled by the app.
+The pros of protobuf and rpc are compatibilty (backward and forward) and flexibility (code + api generated followig the rule you declare in the 
+.proto file). Cons I find is that it an really be tricky when use on prod because:
+-deleting/updating are a pain in a prod situation because of backward and forward compatibity.
+-special rules for encoding where lower values fields use less place, then if increase per range with the values
+so the way the data is organized really matters and architecture must take into account potential future features.
+It also might creates big files with a lot of redundancy

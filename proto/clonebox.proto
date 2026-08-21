@@ -1,0 +1,90 @@
+syntax = "proto3";
+package clonebox_tasks;
+
+enum ContainerState {
+  CONTAINER_STATE_UNKNOWN = 0;
+  CREATING = 1;
+  CREATED = 2;
+  RUNNING = 3;
+  STOPPED = 4;
+  PAUSED = 5;
+}
+
+message State {
+    string oci_version = 1;
+    string id = 2;
+    ContainerState status = 3;
+    optional int32 pid = 4;
+    string bundle = 5;
+    map<string, string> annotations = 6;
+}
+
+message CreateRequest {
+  string container_id = 1;
+  string config_path = 2;
+}
+message CreateReply {}
+
+message StartRequest {
+  string container_id = 1;
+}
+message StartReply {}
+
+message StateRequest {
+  string container_id = 1;
+}
+message StateReply {
+  State state = 1;
+}
+
+message KillRequest {
+  string container_id = 1;
+}
+message KillReply {}
+
+message DeleteRequest {
+  string container_id = 1;
+  optional bool force = 2;
+}
+message DeleteReply {}
+
+message PauseRequest {
+ string container_id = 1; 
+}
+message PauseReply {}
+
+message ResumeRequest {
+  string container_id = 1;
+}
+message ResumeReply {}
+
+message ExecRequest {
+  string container_id = 1;
+  repeated string commands = 2;
+}
+message ExecReply {}
+
+message WaitRequest {
+  string id = 1;
+}
+message WaitReply {
+  int32 exit = 1;
+}
+
+message ListRequest {}
+message ListReply {
+  repeated State states = 1;
+}
+
+service CloneboxTasks {
+  rpc Create(CreateRequest) returns (CreateReply);
+  rpc Start(StartRequest) returns (StartReply);
+  rpc State(StateRequest) returns (StateReply);
+  rpc Kill(KillRequest) returns (KillReply);
+  rpc Delete(DeleteRequest) returns (DeleteReply);
+  rpc Pause(PauseRequest) returns (PauseReply);
+  rpc Resume(ResumeRequest) returns (ResumeReply);
+  rpc Exec(ExecRequest) returns (ExecReply;
+  rpc Wait(WaitRequest) returns (WaitReply);
+  rpc List(ListRequest) returns (ListReply);
+}

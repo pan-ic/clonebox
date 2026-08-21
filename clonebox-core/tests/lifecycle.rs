@@ -2,7 +2,7 @@ mod common;
 
 #[cfg(target_os = "linux")]
 mod lifecycle_test {
-    use super::common::{cleanup, get_binary_path, get_state_file_path};
+    use super::common::{cleanup, get_binary_path, get_state_file_path, path_resolver};
     use std::fs::read_to_string;
     use std::process::Command;
 
@@ -11,8 +11,10 @@ mod lifecycle_test {
         let id = "happy_path";
         cleanup(id);
 
+        let test_file = path_resolver("lifecycle_config");
+
         Command::new(&get_binary_path())
-            .args(["create", id, "tests/lifecycle_config"])
+            .args(["create", id, &test_file])
             .spawn()
             .unwrap();
 

@@ -31,7 +31,7 @@ impl Display for ContainerState {
 }
 
 #[derive(Serialize, Deserialize)]
-pub(crate) struct State {
+pub struct State {
     #[serde(rename = "ociVersion")]
     oci_version: String,
     id: String,

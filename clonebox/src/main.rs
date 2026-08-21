@@ -1,14 +1,4 @@
-mod cgroup;
-mod clone3;
-mod config;
-mod container;
-mod logger;
-mod namespace;
-mod network;
-mod runtime;
-mod state;
-
-use crate::container::{create, delete, exec, kill, pause, resume, start, state};
+use clonebox_core::container::{create, delete, exec, kill, pause, resume, start, state};
 use clap::{Parser, Subcommand};
 use std::fs::create_dir_all;
 
@@ -65,8 +55,10 @@ enum Commands {
     Exec {
         #[arg(required = true)]
         container_id: String,
-        #[arg(required = true)]
-        cmd: String,
+        //#[arg(trailing_var_arg = true)] //that version doesn't need the -- separtor ans also
+        //bundle everything after
+        #[arg(last = true)]
+        cmd: Vec<String>,
     },
 }
 
@@ -85,7 +77,8 @@ fn main() -> anyhow::Result<()> {
             start(&container_id)?;
         }
         Commands::State { container_id } => {
-            state(&container_id)?;
+            let state = state(&container_id)?;
+            print!("{}", state);
         }
         Commands::Kill { container_id } => {
             kill(&container_id)?;
@@ -103,7 +96,7 @@ fn main() -> anyhow::Result<()> {
             resume(&container_id)?;
         }
         Commands::Exec { container_id, cmd } => {
-            exec(&container_id, &cmd)?;
+            exec(&container_id, cmd)?;
         }
     }
     Ok(())

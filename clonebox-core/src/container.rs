@@ -106,7 +106,7 @@ pub fn create(container_id: &str, config_path: &str) -> anyhow::Result<()> {
         anyhow::bail!("container {} already exists", container_id);
     }
 
-    create_dir_all(&bundle_path).context("failed to create container bundle")?;
+   // create_dir_all(&bundle_path).context("failed to create container bundle")?;
     let config = Config::load(config_path).context("failed to load config")?;
     if config.get_root_path().is_empty() {
         anyhow::bail!("config.json: root.path is required");
@@ -118,6 +118,7 @@ pub fn create(container_id: &str, config_path: &str) -> anyhow::Result<()> {
     {
         anyhow::bail!("config.json: process.args is required")
     }
+    create_dir_all(&bundle_path).context("failed to create container bundle")?;
     let mut log_fd = open_log_file(&bundle_path).context("create: ")?;
     let mut runtime = Runtime::new(None, None, None);
     let state = State::new(
@@ -203,7 +204,7 @@ pub fn create(container_id: &str, config_path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(crate) fn start(container_id: &str) -> anyhow::Result<()> {
+pub fn start(container_id: &str) -> anyhow::Result<()> {
     let state = read_state_file(container_id).context("failed to read state file")?;
 
     if state.get_state() != ContainerState::Created {
@@ -220,15 +221,11 @@ pub(crate) fn start(container_id: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(crate) fn state(container_id: &str) -> anyhow::Result<()> {
-    let state = read_state_file(container_id).context("failed to read state file")?;
-
-    print!("{}", state);
-
-    Ok(())
+pub fn state(container_id: &str) -> anyhow::Result<State> {
+    Ok(read_state_file(container_id).context("failed to read state file")?)
 }
 
-pub(crate) fn kill(container_id: &str) -> anyhow::Result<()> {
+pub fn kill(container_id: &str) -> anyhow::Result<()> {
     let mut state = read_state_file(container_id).context("failed to read state file")?;
 
     match (state.get_state(), state.get_pid()) {
@@ -249,7 +246,7 @@ pub(crate) fn kill(container_id: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(crate) fn delete(container_id: &str, force: bool) -> anyhow::Result<()> {
+pub fn delete(container_id: &str, force: bool) -> anyhow::Result<()> {
     if force {
         cleanup(container_id, force).context("delete: failed to force cleanup:")?;
         return Ok(());
@@ -266,7 +263,7 @@ pub(crate) fn delete(container_id: &str, force: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(crate) fn pause(container_id: &str) -> anyhow::Result<()> {
+pub fn pause(container_id: &str) -> anyhow::Result<()> {
     let state = read_state_file(container_id).context("failed to read state file")?;
     let cgroup_path = format!("/sys/fs/cgroup/clonebox/{}", container_id);
 
@@ -281,7 +278,7 @@ pub(crate) fn pause(container_id: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(crate) fn resume(container_id: &str) -> anyhow::Result<()> {
+pub fn resume(container_id: &str) -> anyhow::Result<()> {
     let state = read_state_file(container_id).context("failed to read state file")?;
     let cgroup_path = format!("/sys/fs/cgroup/clonebox/{}", container_id);
 
@@ -302,7 +299,7 @@ fn enter_namespace(pid: i32, ns: &str, flag: CloneFlags) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(crate) fn exec(container_id: &str, cmd: &str) -> anyhow::Result<()> {
+pub fn exec(container_id: &str, cmd: Vec<String>) -> anyhow::Result<()> {
     let state = read_state_file(container_id).context("failed to read state file")?;
 
     if state.get_state() != ContainerState::Running {
@@ -331,16 +328,7 @@ pub(crate) fn exec(container_id: &str, cmd: &str) -> anyhow::Result<()> {
         Ok(ForkResult::Parent { child, .. }) => {
             waitpid(child, None).context("waitpid failed")?;
         }
-        Ok(ForkResult::Child) => {
-            let args: Vec<String> = cmd
-                .split(' ')
-                .collect::<Vec<&str>>()
-                .iter()
-                .map(|s| s.to_string())
-                .collect();
-
-            container_exec(Some(args), None, None, &mut log_fd);
-        }
+        Ok(ForkResult::Child) => container_exec(Some(cmd), None, None, &mut log_fd),
         Err(_) => anyhow::bail!("failed to fork"),
     }
 

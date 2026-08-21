@@ -1,13 +1,22 @@
-pub fn get_binary_path() -> String {
+use std::path::Path;
+
+pub(crate) fn path_resolver(test_file: &str) -> String {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(format!("tests/{}", test_file))
+        .to_string_lossy()
+        .into_owned()
+}
+
+pub(crate) fn get_binary_path() -> String {
     String::from("./target/debug/clonebox")
 }
 
 #[allow(unused)]
-pub fn get_state_file_path(id: &str) -> String {
+pub(crate) fn get_state_file_path(id: &str) -> String {
     format!("/run/clonebox/{}/state.json", id)
 }
 
-pub fn cleanup(id: &str) {
+pub(crate) fn cleanup(id: &str) {
     if let Ok(state) = std::fs::read_to_string(format!("/run/clonebox/{}/state.json", id)) {
         if let Some(pid_str) = state
             .split("\"pid\":")

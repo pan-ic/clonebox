@@ -2,7 +2,7 @@
 /target
 
 # Cargo.lock — only ignore for libraries, NOT for binaries/applications
-# Cargo.lock
+Cargo.lock
 
 # Editor/IDE files (optional, some prefer a global gitignore)
 .vscode/
