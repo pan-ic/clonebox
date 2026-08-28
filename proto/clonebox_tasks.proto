@@ -78,7 +78,7 @@ message ExecRequest {
 message ExecResponse {}
 
 message WaitRequest {
-  string id = 1;
+  string container_id = 1;
 }
 message WaitResponse {
   int32 exit = 1;

@@ -260,6 +260,89 @@ impl CloneboxTasks for Cloneboxd {
         }
     }
 
+    async fn pause(&self, request: Request<PauseRequest>) -> anyhow::Result<Response<PauseResponse>, Status> {
+        debug!("Request: {:#?}", request);
+        let args = request.into_inner();
+        info!("Pause querry for {}", args.container_id);
+        
+        match pause(&args.container_id) {
+            Ok(()) => {
+                {
+                    let mut containers = self.containers.lock().unwrap();
+                    if let Some(entry) = containers.get_mut(&args.container_id) {
+                        entry.state = ContainerStateCore::Paused;
+                    }
+                }
+                info!("{} successfully paused", args.container_id);
+                Ok(Response::new(PauseResponse { }))
+            },
+            Err(e) => {
+                let err = e.to_string();
+                error!("Pause: {:#?}", err);
+                Err(Status::internal(err))
+            },
+        }
+    }
+
+    async fn resume(&self, request: Request<ResumeRequest>) -> anyhow::Result<Response<ResumeResponse>, Status> {
+        debug!("Request: {:#?}", request);
+        let args = request.into_inner();
+        info!("Resume querry for {}", args.container_id);
+
+        match resume(&args.container_id) {
+            Ok(()) => {
+                {
+                    let mut containers = self.containers.lock().unwrap();
+                    if let Some(entry) = containers.get_mut(&args.container_id) {
+                        entry.state = ContainerStateCore::Running;
+                    }
+                }
+                info!("{} successfully restarted", args.container_id);
+                Ok(Response::new(ResumeResponse { }))
+            },
+            Err(e) => {
+                let err = e.to_string();
+                error!("Resume: {:#?}", err);
+                Err(Status::internal(err))
+            },
+        }
+    }
+
+    async fn exec(&self, request: Request<ExecRequest>) -> anyhow::Result<Response<ExecResponse>, Status> {
+        Err(Status::unimplemented("exec over gRPC is not implemented in v1; use the clonebox CLI directly"))
+    }
+
+    async fn wait(&self, request: Request<WaitRequest>) -> anyhow::Result<Response<WaitResponse>, Status> {
+        debug!("Request: {:#?}", request);
+        let args = request.into_inner();
+        info!("Wainting for {} ..", args.container_id);
+        let (exit_tx, exit_rx) = oneshot::channel::<i32>();
+
+        {
+            let mut containers = self.containers.lock().unwrap();
+            if let Some(entry) = containers.get_mut(&args.container_id) {
+                entry.exit_waiter.push(exit_tx);
+            } else {
+                let err = "not found".to_string();
+                error!("Wait: {:#?}", err);
+                return Err(Status::internal(err));
+            }
+        }
+
+        match exit_rx.await {
+            Ok(exit) => {
+                info!("{} exited: status {}", args.container_id, exit);
+                Ok(Response::new(WaitResponse {
+                    exit,
+                })) 
+            },
+            Err(e) => {
+                let err = e.to_string();
+                error!("Wait: {:#?}", err);
+                Err(Status::internal(err))
+            },
+        }
+    }
 
     async fn list(&self, request: Request<ListRequest>) -> anyhow::Result<Response<ListResponse>, Status> {
         debug!("Request: {:#?}", request);
