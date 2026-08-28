@@ -189,18 +189,14 @@ daemon tasks":
 -shim: that's how clonebox has been developped and the option I keep; the actual container runtime is also the parent/supervisor of the container. It holds a freeze
 until it receive the signal to let the child execute his process. The deamon keeps a track of the differents existing runtime and update the state.
 -daemon handled/absorbed: the daemon handle the runtime, the freeze and everyting. The point is that if the daemon crashes well everything crashes.
-Finally bringing a daemon into the scope helps me handle a Clonebox weakness: the state managment is currently handled by file writing; this is a decent enough
-solution for development purpose but brings problems:
--updates may not be that accurate
--a race condition may occur (ex 2 tasks modify the file almost in the same time, undefined behavior).
-Now with the demaon state managment is owned  by only one process; the daemon. It's both loaded in memory and written. Keeping a file helps for persistence and
-crash recovery.
 Finally bringing a daemon into scope helps address a Clonebox weakness: state management is currently handled by file writing; decent for development but brings problems:
 -updates may not be accurate
 -race condition possible (2 tasks modify the file near-simultaneously, undefined behavior).
 Target: state fully owned by cloneboxd (in-memory, file as write-through backup), supervisors report events instead of writing state themselves (single writer), race gone.
 Sequencing: RPC skeleton ships first with a halfway version (daemon reads/serializes access to state.json, supervisors still write it directly) to validate
 the architecture end-to-end. Full single-writer version comes after, once skeleton works.
+
+edit: Target: that's not real anymore, I've kept the core writing the state.json.
 
 ## 2026/08/18 Quiet session
 Clonebox repository split into: clonebox, cloneboxd and clonebox-core. clonebox becomes the client + cli that interfere with the daemon cloneboxd. Cloneboxd
@@ -227,3 +223,39 @@ serialization) are a bit surprising at first:
 -a mod with the name of the targeted .proto package must be created with an include macro inside
 -imports of services follow a special norm (ServiceName, ServiceNameServer, ServiceNameClient)
 -interface must implent all the methods referenced in .proto service
+
+## 2026/08/21-23 Hard session
+I've made the decision to keep the clonebox-core lib testable without daemon/client and nearly identical to what it was before adding a daemon. Biggest difficulty
+is to handle the create function. I had to choose between 2 possibilities: supervisor connected to the daemon socket and connect per event. I've
+chosen the second one and handled things this way:
+-daemon has in memory loaded struct not only with the existing containers and their states but 2 differents channels that allows communication in response to the
+events: a waiter one_shot for the return of the created status and a vec of exited one_shot for the wait command (all waiters are held, then fire at the end)
+-clonebox-shim: The daemon get frozen waiting for container to finish if clonebox-core is directly called. To prevent that an intermediate exec (glue) is created
+that itself call the clonebox-core create and so hold the child process (supervisor). The problem is that tokio threads number are limited to the number of cpu cores
+and so, when a thread picks up a create task, that thread will wait until the child/container finish so failure mode happens when there is no free worker
+anymore, the daemon freezes even if everything still works in appearance (current containers). Another problem the intermediary executable palliates is the thread + fork
+combo, without executing an new process, the risks is that the fork inherits the memory and its state so it includes the existing locks, these locks might be held
+by another thread which is now gone, not included in the child process. So the lock stays forever in the child process because it refers to nothing anymore (the
+thread doesn't exist in the child).
+-the clonebox-core creates uses daemon unix socket to message it's status from creating->created and the stopped. Create call still writes to the state.json file
+to keep the state in memory (crash and etc), it also only connects per event. 
+I'm sure that there are a lot of other implementation choices but I've kept that one because it was the balance between time cost efficiency and keep the library
+testable as standalone
+Difficulty encountered here were essentially the mental model for async + shared data struct mixed with channels. Event loop is fired before any create call and
+is waiting to use one_shot calls which has confused me because of the empty shared map. But again there is no problem here that's just the mental model that has
+to be stronger
+
+## 2026/08/24-26 Quiet session
+Other rpcs
+List/State has to implement From trait to make the conversion between the state core datastruct/state.json and the rpc struct that will be sent over the wire.
+
+## 2026/08/28 Quiet session
+Unlinked the supervisor stdin/stderr/stdout from daemon else start command with an intercative process takes the daemon process shell and then the server is lost.
+Implemented daemon recovery, the point is to scan the app data directory the if these are containers, at the same time check if the PID in the state.json is still
+running, if not just update to ::Stopped. The problem then was that after a daemon crash, the shim also was crashed/not connect to start.sk anymore because still
+linked the daemon in the process tree. So two options were either to change the process group of the command that calls the shim (enough to paliate the ctrl-C problem)
+or call a pre-exec  syscall that executes between the fork and the exec an that will give to the child process it own process independency.
+Logger
+Clap help
+Minimal tests
+Next: proper error handling and refacto (clonebox-core, cloneboxd)
