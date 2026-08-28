@@ -1,89 +1,63 @@
-use tonic::{transport::Server, Request, Response, Status};
-use clonebox_core::container::{create, delete, exec, kill, pause, resume, start, state};
-use clonebox_tasks::clonebox_tasks_server::{CloneboxTasks, CloneboxTasksServer};
-use clonebox_tasks::{
-    ContainerState,
-    CreateRequest,
-    CreateResponse,
-    DeleteRequest,
-    DeleteResponse,
-    ExecRequest,
-    ExecResponse,
-    KillRequest,
-    KillResponse,
-    ListRequest,
-    ListResponse,
-    PauseRequest,
-    PauseResponse,
-    ResumeRequest,
-    ResumeResponse,
-    StartRequest,
-    StartResponse,
-    State,
-    StateRequest,
-    StateResponse,
-    WaitRequest,
-    WaitResponse,
+mod event;
+mod daemon;
+mod recovery;
+
+use anyhow::Context;
+use tokio::{
+    net::UnixListener,
+    process::Command,
+    sync::oneshot,
 };
+use tokio_stream::wrappers::UnixListenerStream;
+use tonic::{transport::Server, Request, Response, Status};
+use crate::daemon::clonebox_tasks::clonebox_tasks_server::{CloneboxTasks, CloneboxTasksServer};
+use std::{
+    collections::HashMap,
+    env,
+    env::current_exe,
+    fs::{create_dir_all, Permissions},
+    os::unix::fs::PermissionsExt,
+    path::PathBuf,
+    sync::{Arc, Mutex,},
+};
+
+use crate::event::{
+    get_app_data_path,
+    get_listen_sk,
+    event_loop,
+};
+
+use clonebox_core::state::ContainerState as ContainerStateCore;
+
+use crate::daemon::Cloneboxd;
+
+use crate::recovery::recover;
 
 pub mod clonebox_tasks {
     tonic::include_proto!("clonebox_tasks");
 }
 
-#[derive(Debug, Default)]
-pub struct Cloneboxd {}
-
-#[tonic::async_trait]
-impl CloneboxTasks for Cloneboxd {
-    async fn create(&self, request: Request<CreateRequest>) -> Result<Response<CreateResponse>, Status> {
-        todo!();
-    }
-
-    async fn start(&self, request: Request<StartRequest>) -> Result<Response<StartResponse>, Status> {
-        todo!();
-    }
-
-    async fn state(&self, request: Request<StateRequest>) -> Result<Response<StateResponse>, Status> {
-        todo!();
-    }
-
-    async fn kill(&self, request: Request<KillRequest>) -> Result<Response<KillResponse>, Status> {
-        todo!();
-    }
-
-    async fn delete(&self, request: Request<DeleteRequest>) -> Result<Response<DeleteResponse>, Status> {
-        todo!();
-    }
-
-    async fn pause(&self, request: Request<PauseRequest>) -> Result<Response<PauseResponse>, Status> {
-        todo!();
-    }
-
-    async fn resume(&self, request: Request<ResumeRequest>) -> Result<Response<ResumeResponse>, Status> {
-        todo!();
-    }
-
-    async fn exec(&self, request: Request<ExecRequest>) -> Result<Response<ExecResponse>, Status> {
-        todo!();
-    }
-
-    async fn wait(&self, request: Request<WaitRequest>) -> Result<Response<WaitResponse>, Status> {
-        todo!();
-    }
-
-    async fn list(&self, request: Request<ListRequest>) -> Result<Response<ListResponse>, Status> {
-        todo!();
-    }
-}
-
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let addr = "[::1]:50051".parse()?;
-    let cloneboxd = Cloneboxd::default();
+async fn main() -> anyhow::Result<()> {
+    let app_data_path = "/run/clonebox";
+    let server_socket = "/run/clonebox/clonebox.sock";
+    create_dir_all(app_data_path)?;
+    std::fs::set_permissions("/run/clonebox", Permissions::from_mode(0o700))
+        .context("failed to chmod clonebox dir")?;
+    let cloneboxd = Cloneboxd::new();
+
+    let uds = get_listen_sk(server_socket).await?;
+    let uds_stream = UnixListenerStream::new(uds);
+    recover(&cloneboxd.containers, app_data_path)?;
+    
+    //move
+    let event_socket_path = get_app_data_path();
+    let listener: UnixListener = get_listen_sk(&event_socket_path).await.unwrap();
+    event_loop(listener, &cloneboxd.containers).await.unwrap();
 
     Server::builder()
         .add_service(CloneboxTasksServer::new(cloneboxd))
-        .serve(addr)
+        .serve_with_incoming(uds_stream)
         .await?;
 
     Ok(())
