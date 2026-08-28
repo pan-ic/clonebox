@@ -20,6 +20,8 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex,},
 };
+use tracing_subscriber::filter::EnvFilter;
+use tracing::{debug, error, info, warn};
 
 use crate::event::{
     get_app_data_path,
@@ -44,6 +46,15 @@ async fn main() -> anyhow::Result<()> {
     create_dir_all(app_data_path)?;
     std::fs::set_permissions("/run/clonebox", Permissions::from_mode(0o700))
         .context("failed to chmod clonebox dir")?;
+    //launch with: RUST_LOG=info ./cloneboxd
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .init();
+    //marcos:
+    info!("INFO level");
+    warn!("WARN level");
+    error!("ERROR level");
+    debug!("debug log");
     let cloneboxd = Cloneboxd::new();
 
     let uds = get_listen_sk(server_socket).await?;
