@@ -1,6 +1,41 @@
-use clonebox_core::container::{create, delete, exec, kill, pause, resume, start, state};
+use anyhow::Context;
+use clonebox_core::container::exec;
 use clap::{Parser, Subcommand};
-use std::fs::create_dir_all;
+use std::{
+    fs::{create_dir_all, Permissions},
+    os::unix::fs::PermissionsExt,
+};
+use tonic::{transport::Server, Request, Response, Status};
+use tonic::IntoRequest;
+use clonebox_tasks::clonebox_tasks_client::{CloneboxTasksClient};
+use clonebox_tasks::{
+    ContainerState as ContainerStateProto,
+    CreateRequest,
+    CreateResponse,
+    DeleteRequest,
+    DeleteResponse,
+    ExecRequest,
+    ExecResponse,
+    KillRequest,
+    KillResponse,
+    ListRequest,
+    ListResponse,
+    PauseRequest,
+    PauseResponse,
+    ResumeRequest,
+    ResumeResponse,
+    StartRequest,
+    StartResponse,
+    State as ProtoState,
+    StateRequest,
+    StateResponse,
+    WaitRequest,
+    WaitResponse,
+};
+
+pub mod clonebox_tasks {
+    tonic::include_proto!("clonebox_tasks");
+}
 
 #[derive(Debug, Parser)]
 #[command(version, author, about)]
@@ -60,43 +95,110 @@ enum Commands {
         #[arg(last = true)]
         cmd: Vec<String>,
     },
+    List,
+    #[command(arg_required_else_help = true)]
+    Wait{
+        #[arg(required = true)]
+        container_id: String,
+    },
 }
 
-fn main() -> anyhow::Result<()> {
-    create_dir_all("/run/clonebox")?;
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    let path = "unix:///run/clonebox/clonebox.sock";
+    let mut client = CloneboxTasksClient::connect(path).await?;
 
     match cli.cmd {
         Commands::Create {
             container_id,
             config,
         } => {
-            create(&container_id, &config)?;
+            let create_req = tonic::Request::new(
+                CreateRequest {
+                    container_id,
+                    config_path: config,
+                }
+            );
+            println!("{:?}", client.create(create_req).await?);
         }
         Commands::Start { container_id } => {
-            start(&container_id)?;
+            let start_req = tonic::Request::new(
+                StartRequest {
+                    container_id,
+                }
+            );
+            println!("{:?}", client.start(start_req).await?);
         }
         Commands::State { container_id } => {
-            let state = state(&container_id)?;
-            print!("{}", state);
+            let state_req = tonic::Request::new(
+                StateRequest {
+                    container_id,
+                }
+            );
+            println!("{:?}", client.state(state_req).await?);
         }
         Commands::Kill { container_id } => {
-            kill(&container_id)?;
+            let kill_req = tonic::Request::new(
+                KillRequest {
+                    container_id,
+                }
+            );
+            println!("{:?}", client.kill(kill_req).await?);
         }
         Commands::Delete {
             container_id,
             force,
         } => {
-            delete(&container_id, force)?;
+            let delete_req = tonic::Request::new(
+                DeleteRequest {
+                    container_id,
+                    force,
+                }
+            );
+            println!("{:?}", client.delete(delete_req).await?);
         }
         Commands::Pause { container_id } => {
-            pause(&container_id)?;
+            let pause_req = tonic::Request::new(
+                PauseRequest {
+                    container_id,
+                }
+            );
+            println!("{:?}", client.pause(pause_req).await?);
         }
         Commands::Resume { container_id } => {
-            resume(&container_id)?;
+            let resume_req = tonic::Request::new(
+                ResumeRequest {
+                    container_id,
+                }
+            );
+            println!("{:?}", client.resume(resume_req).await?);
         }
         Commands::Exec { container_id, cmd } => {
-            exec(&container_id, cmd)?;
+            exec(&container_id, cmd)?;            
+            /*
+            let exec_req = tonic::Request::new(
+                ExecRequest {
+                    container_id,
+                    commands: cmd,
+                }
+            );
+            println!("{:?}", client.exec(exec_req).await?);
+            */
+        }
+        Commands::List {} => {
+            let list_req = tonic::Request::new(
+                ListRequest {}
+            );
+            println!("{:?}", client.list(list_req).await?);
+        }
+        Commands::Wait { container_id } => {
+            let wait_req = tonic::Request::new(
+                WaitRequest {
+                    container_id,
+                }
+            );
+            println!("{:?}", client.wait(wait_req).await?);
         }
     }
     Ok(())

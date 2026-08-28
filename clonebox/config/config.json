@@ -2,7 +2,7 @@
     "ociVersion": "1.0.1",
     "process": {
         "args": [
-            "/bin/sh"
+            "/bin/sleep", "60"
         ],
         "env": [
             "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
