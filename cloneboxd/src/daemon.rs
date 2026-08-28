@@ -148,6 +148,12 @@ impl CloneboxTasks for Cloneboxd {
 
         let mut cmd = Command::new(path_to_exec);
         cmd.args([&args.container_id, &args.config_path, &get_app_data_path()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+
+        unsafe { cmd.pre_exec(|| { setsid()
+            .map_err(std::io::Error::from)?;Ok(()) }) };
 
         cmd.spawn()
             .map_err(|e| {Status::internal(e.to_string())})?;
