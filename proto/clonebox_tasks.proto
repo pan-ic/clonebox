@@ -88,3 +88,10 @@ message ListRequest {}
 message ListResponse {
   repeated State states = 1;
 }
+
+/*
+message ListRequest {}
+message ListResponse {
+  map <string, State> containers = 1;
+}
+*/

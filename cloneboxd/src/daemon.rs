@@ -190,6 +190,26 @@ impl CloneboxTasks for Cloneboxd {
         }
     }
 
+    async fn state(&self, request: Request<StateRequest>) -> anyhow::Result<Response<StateResponse>, Status> {
+        debug!("Request: {:#?}", request);
+        let args = request.into_inner();
+        debug!("State query for {}", args.container_id);
+
+        match state(&args.container_id) {
+            Ok(s) => {
+                info!("{} successfully stated", args.container_id);
+                Ok(Response::new(StateResponse {
+                    state: Some(ProtoState::from(s)),
+                }))
+            },
+            Err(e) => {
+                let err = e.to_string();
+                error!("State: {:#?}", err);
+                Err(Status::internal(err))
+            },
+        }
+    }
+
     async fn kill(&self, request: Request<KillRequest>) -> anyhow::Result<Response<KillResponse>, Status> {
         debug!("Request: {:#?}", request);
         let args = request.into_inner();
@@ -240,4 +260,26 @@ impl CloneboxTasks for Cloneboxd {
         }
     }
 
+
+    async fn list(&self, request: Request<ListRequest>) -> anyhow::Result<Response<ListResponse>, Status> {
+        debug!("Request: {:#?}", request);
+        info!("Containers list querried");
+        let ids_list: Vec<String> = {
+            let mut containers = self.containers.lock().unwrap();
+            containers.keys()
+                .cloned()
+                .collect()
+        };
+
+        let mut states_list: Vec<ProtoState> = Vec::new();
+
+        for i in ids_list {
+            if let Ok(s) = state(&i) {
+                states_list.push(ProtoState::from(s));
+            }
+        }
+
+        info!("Container list successfully returned");
+        Ok(Response::new(ListResponse{ states: states_list }))
+    }
 }
