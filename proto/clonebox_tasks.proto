@@ -57,7 +57,7 @@ message KillResponse {}
 
 message DeleteRequest {
   string container_id = 1;
-  optional bool force = 2;
+  bool force = 2;
 }
 message DeleteResponse {}
 
