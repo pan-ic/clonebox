@@ -2,13 +2,13 @@ use anyhow::Context;
 #[cfg(target_os = "linux")]
 use nix::{
     sched::{CloneFlags, setns},
-    sys::{signal::Signal, wait::waitpid},
+    sys::{signal::Signal, wait::{waitpid, WaitStatus},},
     unistd::{ForkResult, Pid, execve, fork, getpid, write as nix_write},
 };
 use std::{
     ffi::CString,
-    fs::{File, create_dir_all, remove_dir, remove_dir_all},
-    os::fd::{AsFd, AsRawFd},
+    fs::{File, create_dir_all, remove_dir, remove_dir_all, Permissions,},
+    os::{ fd::{AsFd, AsRawFd,}, unix::fs::PermissionsExt, },
     path::Path,
 };
 
@@ -32,6 +32,8 @@ use crate::state::{
 
 use crate::runtime::{Runtime, connect_create_process};
 
+use crate::event::Event;
+
 use crate::config::Config;
 
 use crate::logger::{open_log_file, write_log_file};
@@ -40,7 +42,6 @@ fn cleanup(container_id: &str, force: bool) -> anyhow::Result<()> {
     let cgroup_path = format!("/sys/fs/cgroup/clonebox/{}", container_id);
     let bundle_path = get_bundle_path(container_id);
 
-    //switch to best effort when tests are implemented
     if force {
         remove_dir(&cgroup_path).ok();
         remove_dir_all(bundle_path).ok();
@@ -100,13 +101,12 @@ fn container_exec(
 }
 
 #[cfg(target_os = "linux")]
-pub fn create(container_id: &str, config_path: &str) -> anyhow::Result<()> {
+pub fn create(container_id: &str, config_path: &str, socket_path: Option<&str>) -> anyhow::Result<()> {
     let bundle_path = get_bundle_path(container_id);
     if Path::new(&bundle_path).exists() {
         anyhow::bail!("container {} already exists", container_id);
     }
 
-   // create_dir_all(&bundle_path).context("failed to create container bundle")?;
     let config = Config::load(config_path).context("failed to load config")?;
     if config.get_root_path().is_empty() {
         anyhow::bail!("config.json: root.path is required");
@@ -119,6 +119,9 @@ pub fn create(container_id: &str, config_path: &str) -> anyhow::Result<()> {
         anyhow::bail!("config.json: process.args is required")
     }
     create_dir_all(&bundle_path).context("failed to create container bundle")?;
+    std::fs::set_permissions(&bundle_path, Permissions::from_mode(0o700))
+        .context("create: failed to chmod bundle dir")?;
+
     let mut log_fd = open_log_file(&bundle_path).context("create: ")?;
     let mut runtime = Runtime::new(None, None, None);
     let state = State::new(
@@ -129,7 +132,14 @@ pub fn create(container_id: &str, config_path: &str) -> anyhow::Result<()> {
         bundle_path.clone(),
         None,
     );
+    #[allow(unused)]
+    let mut event = Event::new(container_id.to_string(), ContainerState::Creating, Some(0));
+    
+    if let Some(sp) = socket_path {
+        event.send_event(sp).context("create: failed to send event to daemon")?;
+    }
     write_state_file(container_id, &state).context("failed to write state")?;
+    
 
     //TODO: replace what can be repaced by config parsing
     let new_root = config.get_root_path();
@@ -137,11 +147,10 @@ pub fn create(container_id: &str, config_path: &str) -> anyhow::Result<()> {
     let mounts = config.get_mounts().unwrap_or(&empty);
 
     let (_, child_cgroup_fd) = create_cgroup(container_id).context("failed to create cgroup")?;
-    let os_resources = vec!["cpu", "memory"];
-    let app_resources = vec!["cpu", "memory"];
-    init_resources(get_root_cgroup_path(), &os_resources)
+    let resources = vec!["cpu", "memory"];
+    init_resources(get_root_cgroup_path(), &resources)
         .context("failed to init host resources")?;
-    init_resources(get_app_cgroup_path(), &app_resources)
+    init_resources(get_app_cgroup_path(), &resources)
         .context("failed to init clonebox resources")?;
 
     let clone_flags: CloneFlags = CloneFlags::CLONE_NEWPID
@@ -184,6 +193,10 @@ pub fn create(container_id: &str, config_path: &str) -> anyhow::Result<()> {
     set_cgroup(&child_cgroup_path, "cpu", "max", "100000 100000")?;
     set_cgroup(&child_cgroup_path, "memory", "max", "256M")?;
 
+    if let Some(sp) = socket_path {
+        event.update_state(ContainerState::Created);
+        event.send_event(sp).context("create: failed to send event to daemon")?;
+    }
     update_state(container_id, |s| s.set_created(child_pid.as_raw()))
         .context("failed to update container state")?;
 
@@ -195,11 +208,31 @@ pub fn create(container_id: &str, config_path: &str) -> anyhow::Result<()> {
         .context("failed to write into pipe")?;
 
     let child_return = waitpid(child_pid, None).context("waitpid failure")?;
+    //TODO: proper child retrun handling
+    //pub enum WaitStatus {
+    //  Exited(Pid, i32),
+    //  Signaled(Pid, Signal, bool),
+    //  Stopped(Pid, Signal),
+    //  PtraceEvent(Pid, Signal, c_int),
+    //  PtraceSyscall(Pid),
+    //  Continued(Pid),
+    //  StillAlive,
+    //}
+
+    if let Some(sp) = socket_path {
+        match child_return {
+            WaitStatus::Exited(_, i) => {
+                event.update_exit_code(i);
+            },
+            _ => {},
+        };
+        event.update_state(ContainerState::Stopped);
+        event.send_event(sp).context("create: failed to send event to daemon")?;
+    }
+    update_state(container_id, |s| s.set_stopped()).context("failed to update container state")?;
     let log_child_return = format!("{:?}\n", child_return);
     #[allow(unused)]
     write_log_file(&mut log_fd, &log_child_return);
-
-    update_state(container_id, |s| s.set_stopped()).context("failed to update container state")?;
 
     Ok(())
 }
@@ -215,7 +248,7 @@ pub fn start(container_id: &str) -> anyhow::Result<()> {
     }
 
     connect_create_process(container_id).context("failed to connect to start process")?;
-
+    
     update_state(container_id, |s| s.set_running()).context("failed to update to running state")?;
 
     Ok(())

@@ -8,7 +8,7 @@ use std::{
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum ContainerState {
+pub enum ContainerState {
     Creating,
     Created,
     Running,
@@ -60,7 +60,7 @@ impl State {
         }
     }
 
-    pub(crate) fn get_pid(&self) -> Option<i32> {
+    pub fn get_pid(&self) -> Option<i32> {
         self.pid
     }
 
@@ -69,8 +69,28 @@ impl State {
         self.pid = Some(pid);
     }
 
-    pub(crate) fn get_state(&self) -> ContainerState {
+    pub fn get_state(&self) -> ContainerState {
         self.status
+    }
+
+    pub fn set_state(&mut self, status: ContainerState) {
+        self.status = status;
+    }
+
+    pub fn get_oci_version(&self) -> &str {
+        &self.oci_version
+    }
+
+    pub fn get_id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn get_bundle(&self) -> &str {
+        &self.bundle
+    }
+
+    pub fn get_annotations(&self) -> &Option<HashMap<String, String>> {
+        &self.annotations
     }
 
     pub(crate) fn set_running(&mut self) {

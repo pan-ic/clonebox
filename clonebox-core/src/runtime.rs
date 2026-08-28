@@ -7,7 +7,13 @@ use nix::{
     },
     unistd::{pipe2, read, write},
 };
-use std::os::fd::{AsFd, AsRawFd, OwnedFd};
+use std::{
+    os::{ 
+        fd::{AsFd, AsRawFd, OwnedFd},
+        unix::fs::PermissionsExt,
+    },
+    fs::Permissions,
+};
 
 use crate::state::get_bundle_path;
 
@@ -69,6 +75,8 @@ impl Runtime {
                 .context("parent_proc_socket: failed to create unix address")?,
         )
         .context("parent_proc_socket: failed to bind")?;
+        std::fs::set_permissions(&fd_path, Permissions::from_mode(0o600))
+            .context("parent_proc_socket: failed to chmod socket")?;
         listen(
             &unix_sock,
             Backlog::new(1).context("parent_proc_socket: failed to create backlog type")?,
