@@ -2,7 +2,9 @@
 name = "clonebox-shim"
 version = "0.1.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "clonebox-shim is a container supervisor that allows independency from daemon"
+authors = ["pan-ic <dev@paan.fr>"]
 
 [dependencies]
-tokio = { version = "1.0", features = ["process"] }
 clonebox-core = { path = "../clonebox-core" }

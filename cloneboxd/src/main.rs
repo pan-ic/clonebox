@@ -1,37 +1,25 @@
-mod event;
+mod convert;
 mod daemon;
+mod entry;
+mod event;
 mod recovery;
 
+use crate::clonebox_tasks::clonebox_tasks_server::CloneboxTasksServer;
 use anyhow::Context;
-use tokio::{
-    net::UnixListener,
-    process::Command,
-    sync::oneshot,
-};
-use tokio_stream::wrappers::UnixListenerStream;
-use tonic::{transport::Server, Request, Response, Status};
-use crate::daemon::clonebox_tasks::clonebox_tasks_server::{CloneboxTasks, CloneboxTasksServer};
 use std::{
-    collections::HashMap,
-    env,
-    env::current_exe,
-    fs::{create_dir_all, Permissions},
+    fs::{Permissions, create_dir_all},
     os::unix::fs::PermissionsExt,
-    path::PathBuf,
-    sync::{Arc, Mutex,},
 };
+use tokio::{net::UnixListener, signal::ctrl_c};
+use tokio_stream::wrappers::UnixListenerStream;
+use tonic::transport::Server;
 use tracing_subscriber::filter::EnvFilter;
-use tracing::{debug, error, info, warn};
 
-use crate::event::{
-    get_app_data_path,
-    get_listen_sk,
-    event_loop,
-};
+use crate::event::{event_loop, get_event_socket_path, get_listen_sk};
 
-use clonebox_core::state::ContainerState as ContainerStateCore;
+use crate::entry::Cloneboxd;
 
-use crate::daemon::Cloneboxd;
+use crate::daemon::graceful_shutdown;
 
 use crate::recovery::recover;
 
@@ -42,34 +30,35 @@ pub mod clonebox_tasks {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let app_data_path = "/run/clonebox";
-    let server_socket = "/run/clonebox/clonebox.sock";
+    let client_socket = "/run/clonebox/clonebox.sk";
     create_dir_all(app_data_path)?;
     std::fs::set_permissions("/run/clonebox", Permissions::from_mode(0o700))
         .context("failed to chmod clonebox dir")?;
-    //launch with: RUST_LOG=info ./cloneboxd
+    //launch with: RUST_LOG={level} ./cloneboxd
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
         .init();
-    //marcos:
-    info!("INFO level");
-    warn!("WARN level");
-    error!("ERROR level");
-    debug!("debug log");
     let cloneboxd = Cloneboxd::new();
 
-    let uds = get_listen_sk(server_socket).await?;
+    let uds = get_listen_sk(client_socket).await?;
     let uds_stream = UnixListenerStream::new(uds);
     recover(&cloneboxd.containers, app_data_path)?;
-    
+
     //move
-    let event_socket_path = get_app_data_path();
+    let event_socket_path = get_event_socket_path();
     let listener: UnixListener = get_listen_sk(&event_socket_path).await.unwrap();
     event_loop(listener, &cloneboxd.containers).await.unwrap();
 
     Server::builder()
         .add_service(CloneboxTasksServer::new(cloneboxd))
-        .serve_with_incoming(uds_stream)
+        .serve_with_incoming_shutdown(uds_stream, async {
+            ctrl_c().await.ok();
+        })
         .await?;
+
+    let _ = graceful_shutdown(client_socket, &event_socket_path);
 
     Ok(())
 }

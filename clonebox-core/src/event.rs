@@ -1,11 +1,9 @@
-use anyhow::Context;
-use serde::{Serialize, Deserialize};
-use std::{
-    io::Write,
-    os::unix::net::UnixStream,
-};
+use serde::{Deserialize, Serialize};
+use std::{io::Write, os::unix::net::UnixStream};
 
 use crate::state::ContainerState;
+
+use crate::error::{CoreError, EventError};
 
 #[derive(Serialize, Deserialize)]
 pub struct Event {
@@ -15,9 +13,7 @@ pub struct Event {
 }
 
 impl Event {
-    pub fn new(id: String,
-        state: ContainerState,
-        exit_code: Option<i32>) -> Self {
+    pub fn new(id: String, state: ContainerState, exit_code: Option<i32>) -> Self {
         Event {
             id,
             state,
@@ -25,20 +21,21 @@ impl Event {
         }
     }
 
-    fn get_stream_sk(&self, path: &str) -> anyhow::Result<UnixStream> {
+    fn get_stream_sk(&self, path: &str) -> Result<UnixStream, CoreError> {
         Ok(UnixStream::connect(path)
-            .context("Event: get_stream_sk: failed to connect to socket")?)
+            .map_err(|e| EventError::ConnectFailure(e, path.to_string()))?)
     }
 
-    pub fn send_event(&self, path: &str) -> anyhow::Result<()> {
+    pub fn send_event(&self, path: &str) -> Result<(), CoreError> {
         let mut sk = self.get_stream_sk(path)?;
-        let serialized = format!("{}\n",
-            serde_json::to_string(&self)
-            .context("Event: send_event: failed to serialize")?);
-        
-        sk.write_all(&serialized.as_bytes())
-            .context("Event: send_event: failed to send status message")?;
-        
+        let serialized = format!(
+            "{}\n",
+            serde_json::to_string(&self).map_err(EventError::Json)?
+        );
+
+        sk.write_all(serialized.as_bytes())
+            .map_err(EventError::WriteFailure)?;
+
         Ok(())
     }
 
@@ -48,7 +45,7 @@ impl Event {
 
     pub fn get_state(&self) -> ContainerState {
         self.state
-    } 
+    }
 
     pub(crate) fn update_exit_code(&mut self, exit_code: i32) {
         self.exit_code = Some(exit_code);

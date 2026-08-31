@@ -1,6 +1,7 @@
-use anyhow::Context;
 use serde::Deserialize;
 use std::fs::read_to_string;
+
+use crate::error::{ConfigError, CoreError};
 
 #[derive(Deserialize, Clone)]
 pub(crate) struct Config {
@@ -36,12 +37,21 @@ pub(crate) struct Mount {
 }
 
 impl Config {
-    pub(crate) fn load(config_path: &str) -> anyhow::Result<Self> {
+    pub(crate) fn load(config_path: &str) -> Result<Self, CoreError> {
         let config_file = format!("{}/config.json", config_path);
-        let raw_conf = read_to_string(&config_file)
-            .with_context(|| format!("failed to read {}", config_file))?;
-        let config: Config =
-            serde_json::from_str(&raw_conf).context("failed to desirialize config")?;
+        let raw_conf = read_to_string(&config_file).map_err(ConfigError::Io)?;
+        let config: Config = serde_json::from_str(&raw_conf).map_err(ConfigError::Json)?;
+
+        if config.get_root_path().is_empty() {
+            return Err(ConfigError::MissingRootPath.into());
+        }
+        if config
+            .get_process_args()
+            .map(|a| a.is_empty())
+            .unwrap_or(true)
+        {
+            return Err(ConfigError::MissingProcessArgs.into());
+        }
 
         Ok(config)
     }

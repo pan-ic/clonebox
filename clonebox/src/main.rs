@@ -1,36 +1,9 @@
-use anyhow::Context;
-use clonebox_core::container::exec;
 use clap::{Parser, Subcommand};
-use std::{
-    fs::{create_dir_all, Permissions},
-    os::unix::fs::PermissionsExt,
-};
-use tonic::{transport::Server, Request, Response, Status};
-use tonic::IntoRequest;
-use clonebox_tasks::clonebox_tasks_client::{CloneboxTasksClient};
+use clonebox_core::container::exec;
+use clonebox_tasks::clonebox_tasks_client::CloneboxTasksClient;
 use clonebox_tasks::{
-    ContainerState as ContainerStateProto,
-    CreateRequest,
-    CreateResponse,
-    DeleteRequest,
-    DeleteResponse,
-    ExecRequest,
-    ExecResponse,
-    KillRequest,
-    KillResponse,
-    ListRequest,
-    ListResponse,
-    PauseRequest,
-    PauseResponse,
-    ResumeRequest,
-    ResumeResponse,
-    StartRequest,
-    StartResponse,
-    State as ProtoState,
-    StateRequest,
-    StateResponse,
-    WaitRequest,
-    WaitResponse,
+    CreateRequest, DeleteRequest, KillRequest, ListRequest, PauseRequest, ResumeRequest,
+    StartRequest, StateRequest, WaitRequest,
 };
 
 pub mod clonebox_tasks {
@@ -44,61 +17,73 @@ struct Cli {
     cmd: Commands,
 }
 
-//TODO: needs cleaner help
 #[derive(Debug, Subcommand)]
 enum Commands {
-    #[command(arg_required_else_help = true)]
+    #[command(arg_required_else_help = true, about = "Creates a container")]
     Create {
-        #[arg(required = true)]
+        #[arg(required = true, help = "container name")]
         container_id: String,
-        #[arg(required = true)]
+        #[arg(required = true, help = "path to the bundle/config directory")]
         config: String,
     },
-    #[command(arg_required_else_help = true)]
+    #[command(
+        arg_required_else_help = true,
+        about = "Starts an already created container"
+    )]
     Start {
-        #[arg(required = true)]
+        #[arg(required = true, help = "container name")]
         container_id: String,
     },
-    #[command(arg_required_else_help = true)]
+    #[command(
+        arg_required_else_help = true,
+        about = "Query and print an existing container state"
+    )]
     State {
-        #[arg(required = true)]
+        #[arg(required = true, help = "container name")]
         container_id: String,
     },
-    #[command(arg_required_else_help = true)]
+    #[command(arg_required_else_help = true, about = "Stops a running container")]
     Kill {
-        #[arg(required = true)]
+        #[arg(required = true, help = "container name")]
         container_id: String,
     },
-    #[command(arg_required_else_help = true)]
+    #[command(arg_required_else_help = true, about = "Deletes a stopped container")]
     Delete {
-        #[arg(required = true)]
+        #[arg(required = true, help = "container name")]
         container_id: String,
-        #[arg(short, long)]
+        #[arg(short, long, help = "force deletes, optional")]
         force: bool,
     },
-    #[command(arg_required_else_help = true)]
+    #[command(arg_required_else_help = true, about = "Pauses a running container")]
     Pause {
-        #[arg(required = true)]
+        #[arg(required = true, help = "container name")]
         container_id: String,
     },
-    #[command(arg_required_else_help = true)]
+    #[command(arg_required_else_help = true, about = "Resume a paused container")]
     Resume {
-        #[arg(required = true)]
+        #[arg(required = true, help = "container name")]
         container_id: String,
     },
-    #[command(arg_required_else_help = true)]
+    #[command(
+        arg_required_else_help = true,
+        about = "Execute a command inside a running container (current version bypasses daemon, see readme)"
+    )]
     Exec {
-        #[arg(required = true)]
+        #[arg(required = true, help = "container name")]
         container_id: String,
         //#[arg(trailing_var_arg = true)] //that version doesn't need the -- separtor ans also
         //bundle everything after
-        #[arg(last = true)]
+        #[arg(last = true, help = "command to run")]
         cmd: Vec<String>,
     },
+    #[command(about = "Querry daemon about all existing containers")]
     List,
-    #[command(arg_required_else_help = true)]
-    Wait{
-        #[arg(required = true)]
+    #[command(
+        arg_required_else_help = true,
+        about = "Hold the current command until container exits"
+    )]
+    Wait {
+        #[arg(required = true, help = "container name")]
         container_id: String,
     },
 }
@@ -114,90 +99,51 @@ async fn main() -> anyhow::Result<()> {
             container_id,
             config,
         } => {
-            let create_req = tonic::Request::new(
-                CreateRequest {
-                    container_id,
-                    config_path: config,
-                }
-            );
+            let create_req = tonic::Request::new(CreateRequest {
+                container_id,
+                config_path: config,
+            });
             println!("{:?}", client.create(create_req).await?);
         }
         Commands::Start { container_id } => {
-            let start_req = tonic::Request::new(
-                StartRequest {
-                    container_id,
-                }
-            );
+            let start_req = tonic::Request::new(StartRequest { container_id });
             println!("{:?}", client.start(start_req).await?);
         }
         Commands::State { container_id } => {
-            let state_req = tonic::Request::new(
-                StateRequest {
-                    container_id,
-                }
-            );
+            let state_req = tonic::Request::new(StateRequest { container_id });
             println!("{:?}", client.state(state_req).await?);
         }
         Commands::Kill { container_id } => {
-            let kill_req = tonic::Request::new(
-                KillRequest {
-                    container_id,
-                }
-            );
+            let kill_req = tonic::Request::new(KillRequest { container_id });
             println!("{:?}", client.kill(kill_req).await?);
         }
         Commands::Delete {
             container_id,
             force,
         } => {
-            let delete_req = tonic::Request::new(
-                DeleteRequest {
-                    container_id,
-                    force,
-                }
-            );
+            let delete_req = tonic::Request::new(DeleteRequest {
+                container_id,
+                force,
+            });
             println!("{:?}", client.delete(delete_req).await?);
         }
         Commands::Pause { container_id } => {
-            let pause_req = tonic::Request::new(
-                PauseRequest {
-                    container_id,
-                }
-            );
+            let pause_req = tonic::Request::new(PauseRequest { container_id });
             println!("{:?}", client.pause(pause_req).await?);
         }
         Commands::Resume { container_id } => {
-            let resume_req = tonic::Request::new(
-                ResumeRequest {
-                    container_id,
-                }
-            );
+            let resume_req = tonic::Request::new(ResumeRequest { container_id });
             println!("{:?}", client.resume(resume_req).await?);
         }
         Commands::Exec { container_id, cmd } => {
-            exec(&container_id, cmd)?;            
-            /*
-            let exec_req = tonic::Request::new(
-                ExecRequest {
-                    container_id,
-                    commands: cmd,
-                }
-            );
-            println!("{:?}", client.exec(exec_req).await?);
-            */
+            exec(&container_id, cmd)?;
         }
-        Commands::List {} => {
-            let list_req = tonic::Request::new(
-                ListRequest {}
-            );
+        Commands::List => {
+            let list_req = tonic::Request::new(ListRequest {});
             println!("{:?}", client.list(list_req).await?);
         }
         Commands::Wait { container_id } => {
-            let wait_req = tonic::Request::new(
-                WaitRequest {
-                    container_id,
-                }
-            );
+            let wait_req = tonic::Request::new(WaitRequest { container_id });
             println!("{:?}", client.wait(wait_req).await?);
         }
     }

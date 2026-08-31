@@ -2,6 +2,8 @@ use libc::syscall;
 use nix::{sys::signal::Signal, unistd::Pid};
 use std::os::fd::RawFd;
 
+use crate::error::CloneError;
+
 pub const CLONE_PIDFD: u64 = 0x00001000;
 pub const CLONE_PARENT_SETTID: u64 = 0x00100000;
 pub const CLONE_CHILD_SETTID: u64 = 0x01000000;
@@ -100,25 +102,25 @@ impl Clone3 {
         self
     }
 
-    pub(crate) fn build(self) -> anyhow::Result<Pid> {
+    pub(crate) fn build(self) -> Result<Pid, CloneError> {
         if self.flags & CLONE_PIDFD != 0 && self.pid_fd.is_none() {
-            anyhow::bail!("CLONE_PIDFD set but no pid_fd provided")
+            return Err(CloneError::NoPidFd);
         }
 
         if self.flags & CLONE_CHILD_SETTID != 0 && self.child_tid.is_none() {
-            anyhow::bail!("CLONE_CHILD_SETTID set but no child_tid provided")
+            return Err(CloneError::NoChildTid);
         }
 
         if self.flags & CLONE_PARENT_SETTID != 0 && self.parent_tid.is_none() {
-            anyhow::bail!("CLONE_PARENT_SETTID set but no parent_tid provided")
+            return Err(CloneError::NoParentTid);
         }
 
         if self.flags & CLONE_SETTLS != 0 && self.tls.is_none() {
-            anyhow::bail!("CLONE_SETTLS set but no tls provided")
+            return Err(CloneError::NoTls);
         }
 
         if self.flags & CLONE_INTO_CGROUP != 0 && self.cgroup.is_none() {
-            anyhow::bail!("CLONE_INTO_CGROUP set but no cgroup fd provided")
+            return Err(CloneError::NoCgroup);
         }
 
         let flags = self.flags;
@@ -130,7 +132,7 @@ impl Clone3 {
             None => (0u64, 0u64),
             Some(s) => (s.as_ptr() as u64, s.len() as u64),
         };
-        let tls = self.tls.map_or(0, |v| v);
+        let tls = self.tls.unwrap_or(0);
         //let tls = self.tls.map_or(0, |v| {v as u64});
         let (set_tid_ptr, set_tid_size) = match self.set_tid {
             None => (0u64, 0u64),
@@ -161,12 +163,7 @@ impl Clone3 {
         };
 
         if pid < 0 {
-            let errno = unsafe { *libc::__errno_location() };
-            return Err(anyhow::anyhow!(
-                "clone3 failed: errno {}: {}",
-                errno,
-                std::io::Error::last_os_error()
-            ));
+            return Err(CloneError::Clone3Failure(std::io::Error::last_os_error()));
         }
 
         Ok(Pid::from_raw(pid as i32))

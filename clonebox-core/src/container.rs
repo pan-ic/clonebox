@@ -1,14 +1,19 @@
-use anyhow::Context;
 #[cfg(target_os = "linux")]
 use nix::{
     sched::{CloneFlags, setns},
-    sys::{signal::Signal, wait::{waitpid, WaitStatus},},
+    sys::{
+        signal::Signal,
+        wait::{WaitStatus, waitpid},
+    },
     unistd::{ForkResult, Pid, execve, fork, getpid, write as nix_write},
 };
 use std::{
     ffi::CString,
-    fs::{File, create_dir_all, remove_dir, remove_dir_all, Permissions,},
-    os::{ fd::{AsFd, AsRawFd,}, unix::fs::PermissionsExt, },
+    fs::{File, Permissions, create_dir_all, remove_dir, remove_dir_all},
+    os::{
+        fd::{AsFd, AsRawFd},
+        unix::fs::PermissionsExt,
+    },
     path::Path,
 };
 
@@ -38,7 +43,9 @@ use crate::config::Config;
 
 use crate::logger::{open_log_file, write_log_file};
 
-fn cleanup(container_id: &str, force: bool) -> anyhow::Result<()> {
+use crate::error::{CoreError, NamespaceError, SystemError};
+
+fn cleanup(container_id: &str, force: bool) -> Result<(), CoreError> {
     let cgroup_path = format!("/sys/fs/cgroup/clonebox/{}", container_id);
     let bundle_path = get_bundle_path(container_id);
 
@@ -48,8 +55,8 @@ fn cleanup(container_id: &str, force: bool) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    remove_dir(&cgroup_path).context("failed to clean cgroups")?;
-    remove_dir_all(&bundle_path).context("failed to clean container bundle")?;
+    remove_dir(&cgroup_path).map_err(|e| CoreError::CleanupFailure(e, "cgroup".to_string()))?;
+    remove_dir_all(&bundle_path).map_err(|e| CoreError::CleanupFailure(e, "bundle".to_string()))?;
 
     Ok(())
 }
@@ -101,28 +108,23 @@ fn container_exec(
 }
 
 #[cfg(target_os = "linux")]
-pub fn create(container_id: &str, config_path: &str, socket_path: Option<&str>) -> anyhow::Result<()> {
+pub fn create(
+    container_id: &str,
+    config_path: &str,
+    socket_path: Option<&str>,
+) -> Result<(), CoreError> {
     let bundle_path = get_bundle_path(container_id);
     if Path::new(&bundle_path).exists() {
-        anyhow::bail!("container {} already exists", container_id);
+        return Err(CoreError::ContainerAlreadyExists(container_id.to_string()));
     }
 
-    let config = Config::load(config_path).context("failed to load config")?;
-    if config.get_root_path().is_empty() {
-        anyhow::bail!("config.json: root.path is required");
-    }
-    if config
-        .get_process_args()
-        .map(|a| a.is_empty())
-        .unwrap_or(true)
-    {
-        anyhow::bail!("config.json: process.args is required")
-    }
-    create_dir_all(&bundle_path).context("failed to create container bundle")?;
+    let config = Config::load(config_path)?;
+
+    create_dir_all(&bundle_path).map_err(|e| SystemError::Io(e, bundle_path.to_string()))?;
     std::fs::set_permissions(&bundle_path, Permissions::from_mode(0o700))
-        .context("create: failed to chmod bundle dir")?;
+        .map_err(|e| SystemError::Io(e, bundle_path.to_string()))?;
 
-    let mut log_fd = open_log_file(&bundle_path).context("create: ")?;
+    let mut log_fd = open_log_file(&bundle_path)?;
     let mut runtime = Runtime::new(None, None, None);
     let state = State::new(
         config.get_oci_version().to_string(),
@@ -134,24 +136,21 @@ pub fn create(container_id: &str, config_path: &str, socket_path: Option<&str>) 
     );
     #[allow(unused)]
     let mut event = Event::new(container_id.to_string(), ContainerState::Creating, Some(0));
-    
+
     if let Some(sp) = socket_path {
-        event.send_event(sp).context("create: failed to send event to daemon")?;
+        event.send_event(sp)?;
     }
-    write_state_file(container_id, &state).context("failed to write state")?;
-    
+    write_state_file(container_id, &state)?;
 
     //TODO: replace what can be repaced by config parsing
     let new_root = config.get_root_path();
     let empty = vec![];
     let mounts = config.get_mounts().unwrap_or(&empty);
 
-    let (_, child_cgroup_fd) = create_cgroup(container_id).context("failed to create cgroup")?;
+    let (_, child_cgroup_fd) = create_cgroup(container_id)?;
     let resources = vec!["cpu", "memory"];
-    init_resources(get_root_cgroup_path(), &resources)
-        .context("failed to init host resources")?;
-    init_resources(get_app_cgroup_path(), &resources)
-        .context("failed to init clonebox resources")?;
+    init_resources(get_root_cgroup_path(), &resources)?;
+    init_resources(get_app_cgroup_path(), &resources)?;
 
     let clone_flags: CloneFlags = CloneFlags::CLONE_NEWPID
         | CloneFlags::CLONE_NEWUTS
@@ -159,15 +158,12 @@ pub fn create(container_id: &str, config_path: &str, socket_path: Option<&str>) 
         | CloneFlags::CLONE_NEWNET;
     let signal: Option<Signal> = Some(nix::sys::signal::Signal::SIGCHLD);
 
-    runtime
-        .parent_child_pipe()
-        .context("failed to create pipe")?;
+    runtime.parent_child_pipe()?;
 
     let child_pid: Pid = Clone3::new(signal)
         .flags(clone_flags.bits() as u64)
         .cgroup(child_cgroup_fd.as_raw_fd())
-        .build()
-        .context("clone failure")?;
+        .build()?;
 
     if child_pid == Pid::from_raw(0) {
         make_child_private();
@@ -177,7 +173,7 @@ pub fn create(container_id: &str, config_path: &str, socket_path: Option<&str>) 
         post_pivot_mount(mounts);
         do_default_mounts();
 
-        runtime.freeze_child().context("failed to freeze child")?;
+        runtime.freeze_child()?;
 
         container_exec(
             config.get_process_args(),
@@ -187,7 +183,7 @@ pub fn create(container_id: &str, config_path: &str, socket_path: Option<&str>) 
         );
     }
 
-    create_network(container_id, &child_pid).context("failed to create network")?;
+    create_network(container_id, &child_pid)?;
 
     let child_cgroup_path = get_child_cgroup_path(container_id);
     set_cgroup(&child_cgroup_path, "cpu", "max", "100000 100000")?;
@@ -195,19 +191,14 @@ pub fn create(container_id: &str, config_path: &str, socket_path: Option<&str>) 
 
     if let Some(sp) = socket_path {
         event.update_state(ContainerState::Created);
-        event.send_event(sp).context("create: failed to send event to daemon")?;
+        event.send_event(sp)?;
     }
-    update_state(container_id, |s| s.set_created(child_pid.as_raw()))
-        .context("failed to update container state")?;
+    update_state(container_id, |s| s.set_created(child_pid.as_raw()))?;
 
-    runtime
-        .parent_proc_socket(container_id)
-        .context("failed to create unix socket")?;
-    runtime
-        .unfreeze_child()
-        .context("failed to write into pipe")?;
+    runtime.parent_proc_socket(container_id)?;
+    runtime.unfreeze_child()?;
 
-    let child_return = waitpid(child_pid, None).context("waitpid failure")?;
+    let child_return = waitpid(child_pid, None).map_err(SystemError::Wait)?;
     //TODO: proper child retrun handling
     //pub enum WaitStatus {
     //  Exited(Pid, i32),
@@ -220,159 +211,171 @@ pub fn create(container_id: &str, config_path: &str, socket_path: Option<&str>) 
     //}
 
     if let Some(sp) = socket_path {
-        match child_return {
-            WaitStatus::Exited(_, i) => {
-                event.update_exit_code(i);
-            },
-            _ => {},
+        if let WaitStatus::Exited(_, i) = child_return {
+            event.update_exit_code(i);
         };
         event.update_state(ContainerState::Stopped);
-        event.send_event(sp).context("create: failed to send event to daemon")?;
+        event.send_event(sp)?;
     }
-    update_state(container_id, |s| s.set_stopped()).context("failed to update container state")?;
+    update_state(container_id, |s| s.set_stopped())?;
     let log_child_return = format!("{:?}\n", child_return);
     #[allow(unused)]
-    write_log_file(&mut log_fd, &log_child_return);
+    write_log_file(&mut log_fd, &log_child_return)?;
 
     Ok(())
 }
 
-pub fn start(container_id: &str) -> anyhow::Result<()> {
-    let state = read_state_file(container_id).context("failed to read state file")?;
+pub fn start(container_id: &str) -> Result<(), CoreError> {
+    let state = read_state_file(container_id)?;
 
     if state.get_state() != ContainerState::Created {
-        anyhow::bail!(
-            "{} has not been created or is already running",
-            container_id
-        );
+        return Err(CoreError::ContainerNotCreated(container_id.to_string()));
     }
 
-    connect_create_process(container_id).context("failed to connect to start process")?;
-    
-    update_state(container_id, |s| s.set_running()).context("failed to update to running state")?;
+    connect_create_process(container_id)?;
+
+    update_state(container_id, |s| s.set_running())?;
 
     Ok(())
 }
 
-pub fn state(container_id: &str) -> anyhow::Result<State> {
-    Ok(read_state_file(container_id).context("failed to read state file")?)
+pub fn state(container_id: &str) -> Result<State, CoreError> {
+    read_state_file(container_id)
 }
 
-pub fn kill(container_id: &str) -> anyhow::Result<()> {
-    let mut state = read_state_file(container_id).context("failed to read state file")?;
+pub fn kill(container_id: &str) -> Result<(), CoreError> {
+    let mut state = read_state_file(container_id)?;
 
     match (state.get_state(), state.get_pid()) {
-        (ContainerState::Stopped, _) => anyhow::bail!("{} already stopped", container_id),
+        (ContainerState::Stopped, _) => {
+            return Err(CoreError::ContainerAlreadyStopped(container_id.to_string()));
+        }
         (ContainerState::Running | ContainerState::Created, Some(pid)) => {
             match nix::sys::signal::kill(Pid::from_raw(pid), Signal::SIGKILL) {
                 Ok(_) => {}
                 Err(nix::errno::Errno::ESRCH) => {}
-                Err(e) => return Err(e.into()),
+                Err(e) => {
+                    return Err(CoreError::Other(anyhow::anyhow!(e)));
+                }
             }
         }
-        _ => anyhow::bail!("cannot kill container in current state"),
+        _ => {
+            let e = format!("cannot kill {} in current state", container_id);
+            return Err(CoreError::Other(anyhow::anyhow!(e)));
+        }
     }
 
     state.set_stopped();
-    write_state_file(container_id, &state).context("failed to write state file")?;
+    write_state_file(container_id, &state)?;
 
     Ok(())
 }
 
-pub fn delete(container_id: &str, force: bool) -> anyhow::Result<()> {
+pub fn delete(container_id: &str, force: bool) -> Result<(), CoreError> {
     if force {
-        cleanup(container_id, force).context("delete: failed to force cleanup:")?;
+        cleanup(container_id, force)?;
         return Ok(());
     }
 
-    let state = read_state_file(container_id).context("delete: failed to read state file")?;
+    let state = read_state_file(container_id)?;
 
     if state.get_state() != ContainerState::Stopped {
-        anyhow::bail!("{} is used/busy", container_id);
+        return Err(CoreError::ContainerNotStopped(container_id.to_string()));
     }
 
-    cleanup(container_id, force).context("delete: failed to cleanup:")?;
+    cleanup(container_id, force)?;
 
     Ok(())
 }
 
-pub fn pause(container_id: &str) -> anyhow::Result<()> {
-    let state = read_state_file(container_id).context("failed to read state file")?;
+pub fn pause(container_id: &str) -> Result<(), CoreError> {
+    let state = read_state_file(container_id)?;
     let cgroup_path = format!("/sys/fs/cgroup/clonebox/{}", container_id);
 
     if state.get_state() != ContainerState::Running {
-        anyhow::bail!("{} is not running", container_id);
+        return Err(CoreError::ContainerNotRunning(container_id.to_string()));
     }
 
-    set_cgroup(&cgroup_path, "cgroup", "freeze", "1").context("failed to freeze cgroup")?;
+    set_cgroup(&cgroup_path, "cgroup", "freeze", "1")?;
 
-    update_state(container_id, |s| s.set_paused()).context("failed to update to paused")?;
+    update_state(container_id, |s| s.set_paused())?;
 
     Ok(())
 }
 
-pub fn resume(container_id: &str) -> anyhow::Result<()> {
-    let state = read_state_file(container_id).context("failed to read state file")?;
+pub fn resume(container_id: &str) -> Result<(), CoreError> {
+    let state = read_state_file(container_id)?;
     let cgroup_path = format!("/sys/fs/cgroup/clonebox/{}", container_id);
 
     if state.get_state() != ContainerState::Paused {
-        anyhow::bail!("{} is paused", container_id);
+        return Err(CoreError::ContainerNotPaused(container_id.to_string()));
     }
 
-    set_cgroup(&cgroup_path, "cgroup", "freeze", "0").context("failed to unfreeze cgroup")?;
+    set_cgroup(&cgroup_path, "cgroup", "freeze", "0")?;
 
-    update_state(container_id, |s| s.set_running()).context("failed to update state to running")?;
+    update_state(container_id, |s| s.set_running())?;
 
     Ok(())
 }
 
-fn enter_namespace(pid: i32, ns: &str, flag: CloneFlags) -> anyhow::Result<()> {
-    let fd = File::open(format!("/proc/{}/ns/{}", pid, ns))?;
-    setns(fd.as_fd(), flag)?;
+fn enter_namespace(pid: i32, ns: &str, flag: CloneFlags) -> Result<(), CoreError> {
+    let path = format!("/proc/{}/ns/{}", pid, ns);
+    let fd = File::open(&path).map_err(|e| SystemError::Io(e, path))?;
+    setns(fd.as_fd(), flag).map_err(|e| {
+        let e = format!("enter {} for {} failed: {}", ns, pid, e);
+        NamespaceError::FailedToEnterNamespace(e)
+    })?;
+
     Ok(())
 }
 
-pub fn exec(container_id: &str, cmd: Vec<String>) -> anyhow::Result<()> {
-    let state = read_state_file(container_id).context("failed to read state file")?;
+pub fn exec(container_id: &str, cmd: Vec<String>) -> Result<(), CoreError> {
+    let state = read_state_file(container_id)?;
 
     if state.get_state() != ContainerState::Running {
-        anyhow::bail!("{} is not running", container_id);
+        return Err(CoreError::ContainerNotRunning(container_id.to_string()));
     }
 
     let bundle_path = get_bundle_path(container_id);
-    let mut log_fd = open_log_file(&bundle_path).context("exec: ")?;
+    let mut log_fd = open_log_file(&bundle_path)?;
 
     let child_pid = state
         .get_pid()
-        .ok_or_else(|| anyhow::anyhow!("container has no pid"))?;
+        .ok_or(CoreError::ContainerNotRunning(container_id.to_string()))?;
     let parent_pid = getpid().as_raw();
 
-    let parent_mnt_fd = File::open(format!("/proc/{}/ns/mnt", parent_pid))?;
+    let parent_mnt_path = format!("/proc/{}/ns/mnt", parent_pid);
+    let parent_mnt_fd = File::open(&parent_mnt_path)
+        .map_err(|e| SystemError::Io(e, parent_mnt_path.to_string()))?;
 
-    enter_namespace(child_pid, "uts", CloneFlags::CLONE_NEWUTS)
-        .context("enter child uts failed")?;
-    enter_namespace(child_pid, "pid", CloneFlags::CLONE_NEWPID)
-        .context("enter child pid failed")?;
-    enter_namespace(child_pid, "net", CloneFlags::CLONE_NEWNET)
-        .context("enter child net failed")?;
-    enter_namespace(child_pid, "mnt", CloneFlags::CLONE_NEWNS).context("enter child mnt failed")?;
+    enter_namespace(child_pid, "uts", CloneFlags::CLONE_NEWUTS)?;
+    enter_namespace(child_pid, "pid", CloneFlags::CLONE_NEWPID)?;
+    enter_namespace(child_pid, "net", CloneFlags::CLONE_NEWNET)?;
+    enter_namespace(child_pid, "mnt", CloneFlags::CLONE_NEWNS)?;
 
     match unsafe { fork() } {
         Ok(ForkResult::Parent { child, .. }) => {
-            waitpid(child, None).context("waitpid failed")?;
+            waitpid(child, None).map_err(SystemError::Wait)?;
         }
-        Ok(ForkResult::Child) => container_exec(Some(cmd), None, None, &mut log_fd),
-        Err(_) => anyhow::bail!("failed to fork"),
+        Ok(ForkResult::Child) => {
+            container_exec(Some(cmd), None, None, &mut log_fd);
+            #[allow(unreachable_code)]
+            unsafe {
+                libc::_exit(1);
+            }
+        }
+        Err(e) => return Err(SystemError::Wait(e).into()),
     }
 
     //TODO: write to log file
-    setns(parent_mnt_fd.as_fd(), CloneFlags::CLONE_NEWNS)?;
-    enter_namespace(parent_pid, "uts", CloneFlags::CLONE_NEWUTS)
-        .context("enter parent uts failed")?;
-    enter_namespace(parent_pid, "pid", CloneFlags::CLONE_NEWPID)
-        .context("enter parent pid failed")?;
-    enter_namespace(parent_pid, "net", CloneFlags::CLONE_NEWNET)
-        .context("enter parent net failed")?;
+    setns(parent_mnt_fd.as_fd(), CloneFlags::CLONE_NEWNS).map_err(|e| {
+        let e = format!("enter {} for {} failed: {}", "mnt", parent_pid, e);
+        let _ = write_log_file(&mut log_fd, &e);
+        NamespaceError::FailedToEnterNamespace(e)
+    })?;
+    enter_namespace(parent_pid, "uts", CloneFlags::CLONE_NEWUTS)?;
+    enter_namespace(parent_pid, "pid", CloneFlags::CLONE_NEWPID)?;
+    enter_namespace(parent_pid, "net", CloneFlags::CLONE_NEWNET)?;
 
     Ok(())
 }

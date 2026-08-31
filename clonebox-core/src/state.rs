@@ -1,9 +1,8 @@
-use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fmt::{Display, Formatter},
-    fs::{read_to_string, write},
+    fs,
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
@@ -16,8 +15,10 @@ pub enum ContainerState {
     Paused,
 }
 
+use crate::error::{CoreError, StateError};
+
 impl Display for ContainerState {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             ContainerState::Creating => write!(f, "creating"),
             ContainerState::Created => write!(f, "created"),
@@ -113,7 +114,7 @@ impl State {
 }
 
 impl Display for State {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
             "oci-version: {},\nid: {},\nstatus: {},\n",
@@ -148,26 +149,26 @@ pub(crate) fn get_state_path(container_id: &str) -> String {
     format!("{}/state.json", bundle_path)
 }
 
-pub(crate) fn write_state_file(container_id: &str, state: &State) -> anyhow::Result<()> {
+pub(crate) fn write_state_file(container_id: &str, state: &State) -> Result<(), CoreError> {
     let path = get_state_path(container_id);
-    let ser_json = serde_json::to_string(state).context("Failed to serialize state.json")?;
+    let ser_json = serde_json::to_string(state).map_err(StateError::Json)?;
 
-    write(path, ser_json).context("Failed to write container state")?;
+    fs::write(path, ser_json).map_err(StateError::Io)?;
     Ok(())
 }
 
-pub(crate) fn read_state_file(container_id: &str) -> anyhow::Result<State> {
+pub(crate) fn read_state_file(container_id: &str) -> Result<State, CoreError> {
     let path = get_state_path(container_id);
-    match read_to_string(&path) {
-        Ok(buf) => Ok(serde_json::from_str(&buf).context("Failed to deserialize state.json")?),
+    match fs::read_to_string(&path) {
+        Ok(buf) => Ok(serde_json::from_str(&buf).map_err(StateError::Json)?),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            anyhow::bail!("{}: container not found", container_id)
+            Err(CoreError::ContainerNotFound(container_id.to_string()))
         }
-        Err(e) => Err(e.into()),
+        Err(e) => Err(StateError::Io(e).into()),
     }
 }
 
-pub(crate) fn update_state<F>(container_id: &str, f: F) -> anyhow::Result<State>
+pub(crate) fn update_state<F>(container_id: &str, f: F) -> Result<State, CoreError>
 where
     F: FnOnce(&mut State),
 {

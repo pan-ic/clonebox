@@ -2,6 +2,9 @@
 name = "clonebox"
 version = "0.1.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "clonebox is a cli RPC client that communicates with cloneboxd (daemon)"
+authors = ["pan-ic <dev@paan.fr>"]
 
 [dependencies]
 anyhow = "1.0.103"
@@ -14,3 +17,6 @@ clonebox-core = { path = "../clonebox-core" }
 
 [build-dependencies]
 tonic-prost-build = "*"
+
+[package.metadata.cargo-machete]
+ignored = ["prost", "tonic-prost"]

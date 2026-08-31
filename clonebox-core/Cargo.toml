@@ -3,13 +3,13 @@ name = "clonebox-core"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-description = "Clonebox implements a Linux subset of the OCI runtime specification, the same scope as runc"
+description = "clonebox-core implements a Linux subset of the OCI runtime specification, the same scope as runc"
 authors = ["pan-ic <dev@paan.fr>"]
 
 [dependencies]
-anyhow = "1.0.103"
+anyhow = "1.0.104"
 libc = "0.2.189"
 nix = { version = "0.31.3", features = ["fs", "hostname", "mount", "process", "sched", "signal", "socket"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1"
-
+thiserror = "2.0.20"
