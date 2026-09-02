@@ -84,7 +84,7 @@ impl CloneboxTasks for Cloneboxd {
     ) -> Result<Response<StartResponse>, Status> {
         debug!("Request: {:#?}", request);
         let args = request.into_inner();
-        info!("State querry for {}", args.container_id);
+        info!("Start querry for {}", args.container_id);
 
         start(&args.container_id)
             .inspect_err(|e| error!("Start: {}", e))

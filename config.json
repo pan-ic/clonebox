@@ -2,7 +2,7 @@
     "ociVersion": "1.0.1",
     "process": {
         "args": [
-            "/bin/sleep", "60"
+            "/bin/echo", "OK"
         ],
         "env": [
             "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -11,7 +11,7 @@
         "cwd": "/"
     },
     "root": {
-        "path": "/home/debian/clonebox/clonebox/alpine_fs",
+        "path": "./rootfs",
         "readonly": true
     },
     "hostname": "clobenox",
@@ -22,7 +22,7 @@
             "source": "proc"
         },
         {
-        "destination": "/data",
+        "destination": "/home",
         "type": "none",
         "source": "/home/bind",
         "options": [

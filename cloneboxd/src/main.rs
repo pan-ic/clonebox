@@ -13,6 +13,7 @@ use std::{
 use tokio::{net::UnixListener, signal::ctrl_c};
 use tokio_stream::wrappers::UnixListenerStream;
 use tonic::transport::Server;
+use tracing::info;
 use tracing_subscriber::filter::EnvFilter;
 
 use crate::event::{event_loop, get_event_socket_path, get_listen_sk};
@@ -45,6 +46,8 @@ async fn main() -> anyhow::Result<()> {
     let uds = get_listen_sk(client_socket).await?;
     let uds_stream = UnixListenerStream::new(uds);
     recover(&cloneboxd.containers, app_data_path)?;
+
+    info!("Server running on: {}", client_socket);
 
     //move
     let event_socket_path = get_event_socket_path();

@@ -209,7 +209,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "clonebox-core",
  "prost",
  "tokio",
  "tonic",
@@ -227,6 +226,13 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "clonebox-exec"
+version = "0.1.0"
+dependencies = [
+ "clonebox-core",
 ]
 
 [[package]]

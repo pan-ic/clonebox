@@ -1,10 +1,10 @@
 use clap::{Parser, Subcommand};
-use clonebox_core::container::exec;
 use clonebox_tasks::clonebox_tasks_client::CloneboxTasksClient;
 use clonebox_tasks::{
     CreateRequest, DeleteRequest, KillRequest, ListRequest, PauseRequest, ResumeRequest,
     StartRequest, StateRequest, WaitRequest,
 };
+use std::{env, env::current_exe, path::PathBuf};
 
 pub mod clonebox_tasks {
     tonic::include_proto!("clonebox_tasks");
@@ -88,10 +88,21 @@ enum Commands {
     },
 }
 
+fn exec_path() -> anyhow::Result<PathBuf> {
+    if let Ok(p) = env::var("CLONEBOX_EXEC") {
+        return Ok(PathBuf::from(p));
+    }
+
+    Ok(current_exe()?
+        .parent()
+        .expect("clonebox binary should have a parent dir")
+        .join("clonebox-exec"))
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let path = "unix:///run/clonebox/clonebox.sock";
+    let path = "unix:///run/clonebox/clonebox.sk";
     let mut client = CloneboxTasksClient::connect(path).await?;
 
     match cli.cmd {
@@ -136,7 +147,12 @@ async fn main() -> anyhow::Result<()> {
             println!("{:?}", client.resume(resume_req).await?);
         }
         Commands::Exec { container_id, cmd } => {
-            exec(&container_id, cmd)?;
+            let path = exec_path().unwrap();
+            let status = std::process::Command::new(path)
+                .arg(&container_id)
+                .args(&cmd)
+                .status()?;
+            std::process::exit(status.code().unwrap_or(1));
         }
         Commands::List => {
             let list_req = tonic::Request::new(ListRequest {});

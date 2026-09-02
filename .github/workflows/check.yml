@@ -7,6 +7,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+      - run: apt install protobuf-compiler
       - run: cargo clippy -- -D warnings
   check-rust-fmt:
     runs-on: ubuntu-latest

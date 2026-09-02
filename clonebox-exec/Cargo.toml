@@ -1,0 +1,10 @@
+[package]
+name = "clonebox-exec"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "exec helper; runs setns in a single-threaded process, which the async CLI and daemon cannot do"
+authors = ["pan-ic <dev@paan.fr>"]
+
+[dependencies]
+clonebox-core = { path = "../clonebox-core" }

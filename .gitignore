@@ -26,5 +26,6 @@ tmp
 ARCHITECTURE.md
 scripts/mac.sh
 alpine_fs/
+rootfs/
 scripts/dbg
 vim_shorts
